@@ -43,7 +43,7 @@ AGENT_DIRECTIVE = (
 TOOL_DIRECTIVE = (
     "你拥有多种工具。当用户询问需要实时信息的问题（时间、天气、位置、文件内容、网页等）时，"
     "必须主动调用相应工具获取信息后再回答，不要猜测或询问用户。"
-    "例如：问时间→调 get_current_time，问天气→调 get_weather，问文件→调 read_file。"
+    "例如：问时间→调 get_current_time，问天气→调 get_weather，问文件→调 read_file。" 
 )
 
 ROLES = {
