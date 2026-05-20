@@ -78,23 +78,16 @@ jobs:
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          SEARCH_JSON=$(jq -n --arg kw "$PR_NUMBER" '{
-            "keyword": $kw,
-            "search_fields": ["PR编号"],
-            "select_fields": ["PR编号"],
-            "limit": 10
-          }')
-          RESULT=$(lark-cli base +record-search \
+          RESULT=$(lark-cli base +record-list \
             --base-token "$BITABLE_APP_TOKEN" \
             --table-id "$BITABLE_TABLE_ID" \
             --as bot \
             --format json \
-            --json "$SEARCH_JSON")
-          echo "Search result: $RESULT"
+            --limit 200)
+          echo "List result: $RESULT"
           RECORD_ID=$(echo "$RESULT" | jq -r --argjson num "$PR_NUMBER" '
-            .data.records[]?
-            | select(.fields["PR编号"] == $num)
-            | .record_id' | head -n1)
+            [.data.records[]? | select(.fields["PR编号"] == $num)] | first | .record_id // empty')
+          echo "Found record_id: $RECORD_ID"
           echo "record_id=$RECORD_ID" >> "$GITHUB_OUTPUT"
 
       - name: Sync to Feishu Bitable
