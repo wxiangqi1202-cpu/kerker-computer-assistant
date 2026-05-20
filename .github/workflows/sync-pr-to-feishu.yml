@@ -1,0 +1,71 @@
+name: Sync PR to Feishu Bitable
+
+on:
+  pull_request:
+    types: [opened, closed, reopened, edited, synchronize]
+
+jobs:
+  sync-pr:
+    runs-on: ubuntu-latest
+    env:
+      LARK_APP_ID: ${{ secrets.LARK_APP_ID }}
+      LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
+      BITABLE_APP_TOKEN: ${{ secrets.BITABLE_APP_TOKEN }}
+      BITABLE_TABLE_ID: ${{ secrets.BITABLE_TABLE_ID }}
+    steps:
+      - name: Install lark-cli
+        run: npm install -g @larksuite/cli
+
+      - name: Configure lark-cli
+        run: |
+          lark-cli config init --app-id "$LARK_APP_ID" --brand feishu --app-secret-stdin <<< "$LARK_APP_SECRET"
+          lark-cli auth status
+
+      - name: Determine PR Status
+        id: status
+        run: |
+          if [ "${{ github.event.pull_request.merged }}" = "true" ]; then
+            echo "pr_status=Merged" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.action }}" = "closed" ]; then
+            echo "pr_status=Closed" >> "$GITHUB_OUTPUT"
+          else
+            echo "pr_status=Open" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build Fields JSON
+        id: fields
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_REPO: ${{ github.event.repository.full_name }}
+          PR_STATUS: ${{ steps.status.outputs.pr_status }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          FIELDS=$(jq -n \
+            --arg title "$PR_TITLE" \
+            --argjson number "$PR_NUMBER" \
+            --arg author "$PR_AUTHOR" \
+            --arg repo "$PR_REPO" \
+            --arg status "$PR_STATUS" \
+            --arg url "$PR_URL" \
+            '{
+              "PR标题": $title,
+              "PR编号": $number,
+              "作者": $author,
+              "仓库": $repo,
+              "状态": $status,
+              "链接": $url
+            }')
+          echo "Fields: $FIELDS"
+          echo "$FIELDS" > /tmp/fields.json
+
+      - name: Sync to Feishu Bitable
+        run: |
+          FIELDS=$(cat /tmp/fields.json)
+          echo "Writing to Bitable: $FIELDS"
+          lark-cli base +record-upsert \
+            --base-token "$BITABLE_APP_TOKEN" \
+            --table-id "$BITABLE_TABLE_ID" \
+            --as bot \
+            --json "$FIELDS"
