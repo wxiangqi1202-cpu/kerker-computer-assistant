@@ -2,7 +2,7 @@ name: Sync PR to Feishu Bitable
 
 on:
   pull_request:
-    types: [opened, closed, reopened, edited, synchronize]
+    types: [opened, closed, reopened, edited, synchronize, converted_to_draft, ready_for_review]
 
 jobs:
   sync-pr:
@@ -28,6 +28,8 @@ jobs:
             echo "pr_status=Merged" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event.action }}" = "closed" ]; then
             echo "pr_status=Closed" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.pull_request.draft }}" = "true" ]; then
+            echo "pr_status=Draft" >> "$GITHUB_OUTPUT"
           else
             echo "pr_status=Open" >> "$GITHUB_OUTPUT"
           fi
@@ -41,7 +43,12 @@ jobs:
           PR_REPO: ${{ github.event.repository.full_name }}
           PR_STATUS: ${{ steps.status.outputs.pr_status }}
           PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_CREATED_AT: ${{ github.event.pull_request.created_at }}
+          PR_UPDATED_AT: ${{ github.event.pull_request.updated_at }}
         run: |
+          CREATED_AT=$(date -d "$PR_CREATED_AT" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -j -f '%Y-%m-%dT%H:%M:%SZ' "$PR_CREATED_AT" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$PR_CREATED_AT")
+          UPDATED_AT=$(date -d "$PR_UPDATED_AT" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -j -f '%Y-%m-%dT%H:%M:%SZ' "$PR_UPDATED_AT" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$PR_UPDATED_AT")
           FIELDS=$(jq -n \
             --arg title "$PR_TITLE" \
             --argjson number "$PR_NUMBER" \
@@ -49,23 +56,63 @@ jobs:
             --arg repo "$PR_REPO" \
             --arg status "$PR_STATUS" \
             --arg url "$PR_URL" \
+            --arg branch "$PR_BRANCH" \
+            --arg created_at "$CREATED_AT" \
+            --arg updated_at "$UPDATED_AT" \
             '{
               "PR标题": $title,
               "PR编号": $number,
               "作者": $author,
               "仓库": $repo,
               "状态": $status,
-              "链接": $url
+              "链接": $url,
+              "分支名称": $branch,
+              "创建时间": $created_at,
+              "更新时间": $updated_at
             }')
           echo "Fields: $FIELDS"
           echo "$FIELDS" > /tmp/fields.json
 
-      - name: Sync to Feishu Bitable
+      - name: Find Existing Record
+        id: find
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          FIELDS=$(cat /tmp/fields.json)
-          echo "Writing to Bitable: $FIELDS"
-          lark-cli base +record-upsert \
+          SEARCH_JSON=$(jq -n --arg kw "$PR_NUMBER" '{
+            "keyword": $kw,
+            "search_fields": ["PR编号"],
+            "select_fields": ["PR编号"],
+            "limit": 10
+          }')
+          RESULT=$(lark-cli base +record-search \
             --base-token "$BITABLE_APP_TOKEN" \
             --table-id "$BITABLE_TABLE_ID" \
             --as bot \
+            --format json \
+            --json "$SEARCH_JSON")
+          echo "Search result: $RESULT"
+          RECORD_ID=$(echo "$RESULT" | jq -r --argjson num "$PR_NUMBER" '
+            .data.records[]?
+            | select(.fields["PR编号"] == $num)
+            | .record_id' | head -n1)
+          echo "record_id=$RECORD_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Sync to Feishu Bitable
+        env:
+          RECORD_ID: ${{ steps.find.outputs.record_id }}
+        run: |
+          FIELDS=$(cat /tmp/fields.json)
+          echo "Writing to Bitable: $FIELDS"
+          ARGS=(
+            --base-token "$BITABLE_APP_TOKEN"
+            --table-id "$BITABLE_TABLE_ID"
+            --as bot
             --json "$FIELDS"
+          )
+          if [ -n "$RECORD_ID" ]; then
+            echo "Updating existing record: $RECORD_ID"
+            ARGS+=(--record-id "$RECORD_ID")
+          else
+            echo "Creating new record"
+          fi
+          lark-cli base +record-upsert "${ARGS[@]}"
