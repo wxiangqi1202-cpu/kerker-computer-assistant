@@ -1,0 +1,88 @@
+name: Sync PR to Feishu Bitable
+
+on:
+  pull_request:
+    types: [opened, closed, reopened, edited, synchronize]
+
+jobs:
+  sync-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get Feishu Access Token
+        id: token
+        run: |
+          RESP=$(curl -s -X POST "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal" \
+            -H "Content-Type: application/json" \
+            -d "{\"app_id\":\"${{ secrets.LARK_APP_ID }}\",\"app_secret\":\"${{ secrets.LARK_APP_SECRET }}\"}")
+          TOKEN=$(echo "$RESP" | jq -r '.tenant_access_token')
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Determine PR Status
+        id: status
+        run: |
+          if [ "${{ github.event.pull_request.merged }}" = "true" ]; then
+            echo "pr_status=Merged" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.action }}" = "closed" ]; then
+            echo "pr_status=Closed" >> "$GITHUB_OUTPUT"
+          else
+            echo "pr_status=Open" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Search Existing Record
+        id: search
+        run: |
+          RESP=$(curl -s -X POST \
+            "https://open.feishu.cn/open-apis/bitable/v1/apps/${{ secrets.BITABLE_APP_TOKEN }}/tables/${{ secrets.BITABLE_TABLE_ID }}/records/search" \
+            -H "Authorization: Bearer ${{ steps.token.outputs.token }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"filter\":{
+                \"conjunction\":\"and\",
+                \"conditions\":[{
+                  \"field_name\":\"PR编号\",
+                  \"operator\":\"is\",
+                  \"value\":[\"${{ github.event.pull_request.number }}\"]
+                }]
+              }
+            }")
+          RECORD_ID=$(echo "$RESP" | jq -r '.data.items[0].record_id // empty')
+          echo "record_id=$RECORD_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Create or Update Record
+        run: |
+          CREATED_TS=$(date -d "${{ github.event.pull_request.created_at }}" +%s000 2>/dev/null || echo "")
+          UPDATED_TS=$(date -d "${{ github.event.pull_request.updated_at }}" +%s000 2>/dev/null || echo "")
+
+          FIELDS=$(cat <<'FIELDS_EOF'
+          {
+            "PR标题": "${{ github.event.pull_request.title }}",
+            "PR编号": ${{ github.event.pull_request.number }},
+            "作者": "${{ github.event.pull_request.user.login }}",
+            "仓库": "${{ github.event.repository.full_name }}",
+            "状态": "${{ steps.status.outputs.pr_status }}",
+            "链接": "${{ github.event.pull_request.html_url }}"
+          }
+          FIELDS_EOF
+          )
+
+          if [ -n "$CREATED_TS" ]; then
+            FIELDS=$(echo "$FIELDS" | jq --argjson ct "$CREATED_TS" --argjson ut "$UPDATED_TS" '. + {"创建时间": $ct, "更新时间": $ut}')
+          fi
+
+          RECORD_ID="${{ steps.search.outputs.record_id }}"
+
+          if [ -z "$RECORD_ID" ]; then
+            curl -s -X POST \
+              "https://open.feishu.cn/open-apis/bitable/v1/apps/${{ secrets.BITABLE_APP_TOKEN }}/tables/${{ secrets.BITABLE_TABLE_ID }}/records" \
+              -H "Authorization: Bearer ${{ steps.token.outputs.token }}" \
+              -H "Content-Type: application/json" \
+              -d "{\"fields\": $FIELDS}"
+            echo "✅ Created new record"
+          else
+            curl -s -X PUT \
+              "https://open.feishu.cn/open-apis/bitable/v1/apps/${{ secrets.BITABLE_APP_TOKEN }}/tables/${{ secrets.BITABLE_TABLE_ID }}/records/$RECORD_ID" \
+              -H "Authorization: Bearer ${{ steps.token.outputs.token }}" \
+              -H "Content-Type: application/json" \
+              -d "{\"fields\": $FIELDS}"
+            echo "✅ Updated existing record: $RECORD_ID"
+          fi
