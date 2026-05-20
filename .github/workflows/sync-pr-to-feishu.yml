@@ -10,10 +10,15 @@ jobs:
     steps:
       - name: Get Feishu Access Token
         id: token
+        env:
+          APP_ID: ${{ secrets.LARK_APP_ID }}
+          APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
         run: |
+          BODY=$(jq -n --arg id "$APP_ID" --arg secret "$APP_SECRET" \
+            '{"app_id": $id, "app_secret": $secret}')
           RESP=$(curl -s -X POST "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal" \
             -H "Content-Type: application/json" \
-            -d '{"app_id":"'"${{ secrets.LARK_APP_ID }}"'","app_secret":"'"${{ secrets.LARK_APP_SECRET }}"'"}')
+            -d "$BODY")
           echo "Response: $RESP"
           TOKEN=$(echo "$RESP" | jq -r '.tenant_access_token')
           if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
