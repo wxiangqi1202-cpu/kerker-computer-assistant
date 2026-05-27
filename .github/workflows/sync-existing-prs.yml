@@ -29,7 +29,7 @@ jobs:
       BITABLE_TABLE_ID: ${{ secrets.BITABLE_TABLE_ID }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install lark-cli
         run: npm install -g @larksuite/cli
@@ -47,8 +47,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Determine gh pr list flags
-          GH_ARGS=("--json" "number,title,state,isDraft,author,headRefName,baseRefName,headRefOid,url,body,createdAt,updatedAt,closedAt,mergedAt,mergedBy,commits,additions,deletions,changedFiles,labels,milestone,assignees,reviewRequests")
+          # Step 1: Get PR number list using gh pr list (only lightweight fields)
+          GH_ARGS=("--json" "number,title,state,isDraft,author,headRefName,baseRefName,headRefOid,url,body,createdAt,updatedAt,closedAt,mergedAt,mergedBy,labels,milestone,assignees,reviewRequests")
 
           if [ "$STATE" = "merged" ]; then
             GH_ARGS+=("--state" "closed" "--search" "is:merged")
@@ -73,6 +73,13 @@ jobs:
           echo "$PRS" | jq -c '.[]' | while read -r PR; do
             PR_NUMBER=$(echo "$PR" | jq -r '.number')
             echo "--- Processing PR #$PR_NUMBER ---"
+
+            # Step 2: Get stats (commits/additions/deletions/changedFiles) via gh pr view
+            PR_DETAIL=$(gh pr view "$PR_NUMBER" --json "additions,deletions,changedFiles,commits" 2>/dev/null || echo '{}')
+            COMMITS=$(echo "$PR_DETAIL" | jq -r '.commits | length // 0')
+            ADDITIONS=$(echo "$PR_DETAIL" | jq -r '.additions // 0')
+            DELETIONS=$(echo "$PR_DETAIL" | jq -r '.deletions // 0')
+            CHANGED_FILES=$(echo "$PR_DETAIL" | jq -r '.changedFiles // 0')
 
             # Determine status
             PR_STATE=$(echo "$PR" | jq -r '.state')
@@ -109,10 +116,6 @@ jobs:
             HEAD_SHA=$(echo "$PR" | jq -r '.headRefOid // empty')
             URL=$(echo "$PR" | jq -r '.url // empty')
             BODY=$(echo "$PR" | jq -r '.body // empty' | head -c 5000)
-            COMMITS=$(echo "$PR" | jq -r '.commits.totalCount // 0')
-            ADDITIONS=$(echo "$PR" | jq -r '.additions // 0')
-            DELETIONS=$(echo "$PR" | jq -r '.deletions // 0')
-            CHANGED_FILES=$(echo "$PR" | jq -r '.changedFiles // 0')
             LABELS=$(echo "$PR" | jq -r '[.labels[]?.name] | join(", ")')
             MILESTONE=$(echo "$PR" | jq -r '.milestone.title // empty')
             ASSIGNEES=$(echo "$PR" | jq -r '[.assignees[]?.login] | join(", ")')
