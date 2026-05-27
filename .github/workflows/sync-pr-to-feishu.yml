@@ -3,6 +3,8 @@ name: Sync PR to Feishu Bitable
 on:
   pull_request:
     types: [opened, closed, reopened, edited, synchronize, converted_to_draft, ready_for_review]
+  pull_request_review:
+    types: [submitted]
 
 jobs:
   sync-pr:
@@ -44,32 +46,86 @@ jobs:
           PR_STATUS: ${{ steps.status.outputs.pr_status }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
           PR_CREATED_AT: ${{ github.event.pull_request.created_at }}
           PR_UPDATED_AT: ${{ github.event.pull_request.updated_at }}
+          PR_CLOSED_AT: ${{ github.event.pull_request.closed_at }}
+          PR_MERGED_AT: ${{ github.event.pull_request.merged_at }}
+          PR_MERGED_BY: ${{ github.event.pull_request.merged_by.login }}
+          PR_COMMITS: ${{ github.event.pull_request.commits }}
+          PR_ADDITIONS: ${{ github.event.pull_request.additions }}
+          PR_DELETIONS: ${{ github.event.pull_request.deletions }}
+          PR_CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ', ') }}
+          PR_MILESTONE: ${{ github.event.pull_request.milestone.title }}
+          PR_ASSIGNEES: ${{ join(github.event.pull_request.assignees.*.login, ', ') }}
+          PR_REVIEWERS: ${{ join(github.event.pull_request.requested_reviewers.*.login, ', ') }}
         run: |
-          CREATED_AT=$(date -d "$PR_CREATED_AT" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -j -f '%Y-%m-%dT%H:%M:%SZ' "$PR_CREATED_AT" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$PR_CREATED_AT")
-          UPDATED_AT=$(date -d "$PR_UPDATED_AT" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -j -f '%Y-%m-%dT%H:%M:%SZ' "$PR_UPDATED_AT" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$PR_UPDATED_AT")
+          fmt_date() {
+            local raw="$1"
+            [ -z "$raw" ] || [ "$raw" = "null" ] && echo "" && return
+            date -d "$raw" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$raw"
+          }
+          CREATED_AT=$(fmt_date "$PR_CREATED_AT")
+          UPDATED_AT=$(fmt_date "$PR_UPDATED_AT")
+          CLOSED_AT=$(fmt_date "$PR_CLOSED_AT")
+          MERGED_AT=$(fmt_date "$PR_MERGED_AT")
+
+          # Truncate body to 5000 chars to avoid payload too large
+          BODY_TRUNCATED=$(echo "$PR_BODY" | head -c 5000)
+
           FIELDS=$(jq -n \
             --arg title "$PR_TITLE" \
-            --argjson number "$PR_NUMBER" \
+            --argjson number "${PR_COMMITS:+$PR_NUMBER}" \
             --arg author "$PR_AUTHOR" \
             --arg repo "$PR_REPO" \
             --arg status "$PR_STATUS" \
             --arg url "$PR_URL" \
             --arg branch "$PR_BRANCH" \
+            --arg base_branch "$PR_BASE_BRANCH" \
+            --arg head_sha "$PR_HEAD_SHA" \
+            --arg body "$BODY_TRUNCATED" \
             --arg created_at "$CREATED_AT" \
             --arg updated_at "$UPDATED_AT" \
+            --arg closed_at "$CLOSED_AT" \
+            --arg merged_at "$MERGED_AT" \
+            --arg merged_by "${PR_MERGED_BY:-}" \
+            --argjson commits "${PR_COMMITS:-0}" \
+            --argjson additions "${PR_ADDITIONS:-0}" \
+            --argjson deletions "${PR_DELETIONS:-0}" \
+            --argjson changed_files "${PR_CHANGED_FILES:-0}" \
+            --arg labels "$PR_LABELS" \
+            --arg milestone "${PR_MILESTONE:-}" \
+            --arg assignees "$PR_ASSIGNEES" \
+            --arg reviewers "$PR_REVIEWERS" \
+            --argjson pr_number "$PR_NUMBER" \
             '{
               "PR标题": $title,
-              "PR编号": $number,
+              "PR编号": $pr_number,
               "作者": $author,
               "仓库": $repo,
               "状态": $status,
               "链接": $url,
               "分支名称": $branch,
+              "目标分支": $base_branch,
+              "Head SHA": $head_sha,
+              "PR描述": $body,
               "创建时间": $created_at,
-              "更新时间": $updated_at
-            }')
+              "更新时间": $updated_at,
+              "提交数": $commits,
+              "新增行数": $additions,
+              "删除行数": $deletions,
+              "变更文件数": $changed_files,
+              "标签": $labels,
+              "里程碑": $milestone,
+              "指派人": $assignees,
+              "审查人": $reviewers,
+              "合并人": $merged_by
+            }
+            | if $closed_at != "" then . + {"关闭时间": $closed_at} else . end
+            | if $merged_at != "" then . + {"合并时间": $merged_at} else . end')
           echo "Fields: $FIELDS"
           echo "$FIELDS" > /tmp/fields.json
 
@@ -78,15 +134,28 @@ jobs:
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          RESULT=$(lark-cli base +record-list \
+          RESULT=$(lark-cli base +record-search \
             --base-token "$BITABLE_APP_TOKEN" \
             --table-id "$BITABLE_TABLE_ID" \
             --as bot \
             --format json \
-            --limit 200)
-          echo "List result: $RESULT"
+            --json "{\"keyword\":\"$PR_NUMBER\",\"search_fields\":[\"PR编号\"],\"select_fields\":[\"PR编号\"],\"limit\":50}")
+          echo "Search result: $RESULT"
+
+          # Parse columnar format: find row where PR编号 matches exactly
           RECORD_ID=$(echo "$RESULT" | jq -r --argjson num "$PR_NUMBER" '
-            [.data.records[]? | select(.fields["PR编号"] == $num)] | first | .record_id // empty')
+            .data as $d |
+            if ($d.fields | length) == 0 then empty
+            else
+              ($d.fields | to_entries | map(select(.value == "PR编号")) | .[0].key) as $idx |
+              if $idx == null then empty
+              else
+                [ $d.data | to_entries[] | select(.value[$idx] == $num) | .key ] | .[0] as $row |
+                if $row == null then empty
+                else $d.record_id_list[$row]
+                end
+              end
+            end // empty')
           echo "Found record_id: $RECORD_ID"
           echo "record_id=$RECORD_ID" >> "$GITHUB_OUTPUT"
 
