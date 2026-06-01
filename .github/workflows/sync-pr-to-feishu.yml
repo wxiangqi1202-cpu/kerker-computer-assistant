@@ -69,6 +69,7 @@ jobs:
           PR_MILESTONE: ${{ github.event.pull_request.milestone.title }}
           PR_ASSIGNEES: ${{ join(github.event.pull_request.assignees.*.login, ', ') }}
           PR_REVIEWERS: ${{ join(github.event.pull_request.requested_reviewers.*.login, ', ') }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           fmt_date() {
             local raw="$1"
@@ -80,10 +81,19 @@ jobs:
           CLOSED_AT=$(fmt_date "$PR_CLOSED_AT")
           MERGED_AT=$(fmt_date "$PR_MERGED_AT")
 
-          # Truncate body to 5000 chars to avoid payload too large
-          BODY_TRUNCATED=$(echo "$PR_BODY" | head -c 5000)
+          BODY_TRUNCATED=$(printf '%s' "$PR_BODY" | head -c 5000)
 
-          FIELDS=$(jq -n \
+          STATS_ARGS=""
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            STATS_ARGS=$(jq -n \
+              --argjson commits "${PR_COMMITS:-0}" \
+              --argjson additions "${PR_ADDITIONS:-0}" \
+              --argjson deletions "${PR_DELETIONS:-0}" \
+              --argjson changed_files "${PR_CHANGED_FILES:-0}" \
+              '{"提交数": $commits, "新增行数": $additions, "删除行数": $deletions, "变更文件数": $changed_files}')
+          fi
+
+          BASE_FIELDS=$(jq -n \
             --arg title "$PR_TITLE" \
             --arg author "$PR_AUTHOR" \
             --arg repo "$PR_REPO" \
@@ -98,10 +108,6 @@ jobs:
             --arg closed_at "$CLOSED_AT" \
             --arg merged_at "$MERGED_AT" \
             --arg merged_by "${PR_MERGED_BY:-}" \
-            --argjson commits "${PR_COMMITS:-0}" \
-            --argjson additions "${PR_ADDITIONS:-0}" \
-            --argjson deletions "${PR_DELETIONS:-0}" \
-            --argjson changed_files "${PR_CHANGED_FILES:-0}" \
             --arg labels "$PR_LABELS" \
             --arg milestone "${PR_MILESTONE:-}" \
             --arg assignees "$PR_ASSIGNEES" \
@@ -120,10 +126,6 @@ jobs:
               "PR描述": $body,
               "创建时间": $created_at,
               "更新时间": $updated_at,
-              "提交数": $commits,
-              "新增行数": $additions,
-              "删除行数": $deletions,
-              "变更文件数": $changed_files,
               "标签": $labels,
               "里程碑": $milestone,
               "指派人": $assignees,
@@ -132,6 +134,13 @@ jobs:
             }
             | if $closed_at != "" then . + {"关闭时间": $closed_at} else . end
             | if $merged_at != "" then . + {"合并时间": $merged_at} else . end')
+
+          if [ -n "$STATS_ARGS" ]; then
+            FIELDS=$(echo "$BASE_FIELDS" "$STATS_ARGS" | jq -s '.[0] * .[1]')
+          else
+            FIELDS="$BASE_FIELDS"
+          fi
+
           echo "Fields: $FIELDS"
           echo "$FIELDS" > /tmp/fields.json
 
@@ -140,28 +149,34 @@ jobs:
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          RECORD_ID=""
           RESULT=$(lark-cli base +record-search \
             --base-token "$BITABLE_APP_TOKEN" \
             --table-id "$BITABLE_TABLE_ID" \
             --as bot \
             --format json \
-            --json "{\"keyword\":\"$PR_NUMBER\",\"search_fields\":[\"PR编号\"],\"select_fields\":[\"PR编号\"],\"limit\":50}")
-          echo "Search result: $RESULT"
+            --json "{\"keyword\":\"$PR_NUMBER\",\"search_fields\":[\"PR编号\"],\"select_fields\":[\"PR编号\"],\"limit\":50}" 2>&1) || true
 
-          # Parse columnar format: find row where PR编号 matches exactly
-          RECORD_ID=$(echo "$RESULT" | jq -r --argjson num "$PR_NUMBER" '
-            .data as $d |
-            if ($d.fields | length) == 0 then empty
-            else
-              ($d.fields | to_entries | map(select(.value == "PR编号")) | .[0].key) as $idx |
-              if $idx == null then empty
+          if echo "$RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
+            RECORD_ID=$(echo "$RESULT" | jq -r --argjson num "$PR_NUMBER" '
+              .data as $d |
+              if ($d.fields | length) == 0 then empty
               else
-                [ $d.data | to_entries[] | select(.value[$idx] == $num) | .key ] | .[0] as $row |
-                if $row == null then empty
-                else $d.record_id_list[$row]
+                ($d.fields | to_entries | map(select(.value == "PR编号")) | .[0].key) as $idx |
+                if $idx == null then empty
+                else
+                  [ $d.data | to_entries[] | select(
+                    .value[$idx] == $num or
+                    (.value[$idx] | tostring) == ($num | tostring)
+                  ) | .key ] | .[0] as $row |
+                  if $row == null then empty
+                  else $d.record_id_list[$row]
+                  end
                 end
-              end
-            end // empty')
+              end // empty')
+          else
+            echo "::warning::record-search failed for PR #$PR_NUMBER, will create new record"
+          fi
           echo "Found record_id: $RECORD_ID"
           echo "record_id=$RECORD_ID" >> "$GITHUB_OUTPUT"
 
@@ -183,4 +198,14 @@ jobs:
           else
             echo "Creating new record"
           fi
-          lark-cli base +record-upsert "${ARGS[@]}"
+
+          for attempt in 1 2 3; do
+            if lark-cli base +record-upsert "${ARGS[@]}"; then
+              echo "Upsert succeeded"
+              exit 0
+            fi
+            echo "::warning::Upsert attempt $attempt failed, retrying..."
+            sleep 2
+          done
+          echo "::error::Upsert failed after 3 attempts"
+          exit 1

@@ -84,9 +84,17 @@ jobs:
             date -d "$raw" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$raw"
           }
 
-          echo "$PRS" | jq -c '.[]' | while read -r PR; do
+          FAIL_COUNT=0
+          SUCCESS_COUNT=0
+
+          while read -r PR; do
             PR_NUMBER=$(echo "$PR" | jq -r '.number')
             echo "--- Processing PR #$PR_NUMBER ---"
+
+            COMMITS=0
+            ADDITIONS=0
+            DELETIONS=0
+            CHANGED_FILES=0
 
             # Get stats with retry; on failure skip stats fields to avoid overwriting good data
             STATS_OK=true
@@ -281,9 +289,17 @@ jobs:
             else
               echo "  Creating new record"
             fi
-            lark-cli base +record-upsert "${ARGS[@]}" > /dev/null
+            if lark-cli base +record-upsert "${ARGS[@]}" > /dev/null 2>&1; then
+              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+            else
+              echo "  ::warning::upsert failed for PR #$PR_NUMBER, skipping"
+              FAIL_COUNT=$((FAIL_COUNT + 1))
+            fi
 
             sleep 1
-          done
+          done < <(echo "$PRS" | jq -c '.[]')
 
-          echo "=== Sync complete ==="
+          echo "=== Sync complete: $SUCCESS_COUNT succeeded, $FAIL_COUNT failed ==="
+          if [ "$FAIL_COUNT" -gt 0 ]; then
+            echo "::warning::$FAIL_COUNT PR(s) failed to sync"
+          fi
