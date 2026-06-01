@@ -249,33 +249,34 @@ jobs:
                 | if $merged_at != "" then . + {"合并时间": $merged_at} else . end')
             fi
 
-            # Find existing record
-            SEARCH_RESULT=$(lark-cli base +record-search \
-              --base-token "$BITABLE_APP_TOKEN" \
-              --table-id "$BITABLE_TABLE_ID" \
-              --as bot \
-              --format json \
-              --json "{\"keyword\":\"$PR_NUMBER\",\"search_fields\":[\"PR编号\"],\"select_fields\":[\"PR编号\"],\"limit\":500}" 2>&1) || true
+            # Find existing record via temp filtered view
+            COMMON_ARGS=(--base-token "$BITABLE_APP_TOKEN" --table-id "$BITABLE_TABLE_ID" --as bot)
+            RECORD_ID=""
 
-            if ! echo "$SEARCH_RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
-              echo "  ::warning::record-search failed for PR #$PR_NUMBER, will create new record"
-              RECORD_ID=""
+            VIEW_RESULT=$(lark-cli base +view-create "${COMMON_ARGS[@]}" \
+              --format json \
+              --json '{"name":"_tmp_pr_lookup","type":"grid"}' 2>&1) || true
+            VIEW_ID=$(echo "$VIEW_RESULT" | jq -r '.data.view.view_id // empty')
+
+            if [ -n "$VIEW_ID" ]; then
+              lark-cli base +view-set-filter "${COMMON_ARGS[@]}" \
+                --view-id "$VIEW_ID" \
+                --json "{\"conditions\":[[\"PR编号\",\"==\",$PR_NUMBER]]}" 2>/dev/null || true
+
+              LIST_RESULT=$(lark-cli base +record-list "${COMMON_ARGS[@]}" \
+                --view-id "$VIEW_ID" \
+                --field-id "PR编号" \
+                --format json \
+                --limit 1 2>&1) || true
+
+              if echo "$LIST_RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
+                RECORD_ID=$(echo "$LIST_RESULT" | jq -r '.data.record_id_list[0] // empty')
+              fi
+
+              lark-cli base +view-delete "${COMMON_ARGS[@]}" \
+                --view-id "$VIEW_ID" --yes 2>/dev/null || true
             else
-              RECORD_ID=$(echo "$SEARCH_RESULT" | jq -r --arg num "$PR_NUMBER" '
-                .data as $d |
-                if ($d.fields | length) == 0 then empty
-                else
-                  ($d.fields | to_entries | map(select(.value == "PR编号")) | .[0].key) as $idx |
-                  if $idx == null then empty
-                  else
-                    [ $d.data | to_entries[] | select(
-                      (.value[$idx] | tostring) == $num
-                    ) | .key ] | .[0] as $row |
-                    if $row == null then empty
-                    else $d.record_id_list[$row]
-                    end
-                  end
-                end // empty')
+              echo "  ::warning::Failed to create temp view for PR #$PR_NUMBER, will create new record"
             fi
 
             # Upsert
