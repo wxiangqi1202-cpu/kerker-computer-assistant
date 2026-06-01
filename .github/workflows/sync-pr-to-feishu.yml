@@ -160,7 +160,6 @@ jobs:
         id: find
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           RECORD_ID=""
 
@@ -169,21 +168,21 @@ jobs:
             --table-id "$BITABLE_TABLE_ID" \
             --as bot \
             --format json \
-            --json "{\"keyword\":\"$PR_URL\",\"search_fields\":[\"链接\"],\"select_fields\":[\"链接\"],\"limit\":10}" 2>&1) || true
+            --json "{\"keyword\":\"$PR_NUMBER\",\"search_fields\":[\"PR编号\"],\"select_fields\":[\"PR编号\"],\"limit\":200}" 2>&1) || true
 
           echo "Search raw result: $RESULT"
 
           if echo "$RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
-            RECORD_ID=$(echo "$RESULT" | jq -r --arg url "$PR_URL" '
+            RECORD_ID=$(echo "$RESULT" | jq -r --arg num "$PR_NUMBER" '
               .data as $d |
               if ($d.record_id_list | length) == 0 then empty
               elif ($d.fields | length) == 0 then $d.record_id_list[0]
               else
-                ($d.fields | to_entries | map(select(.value == "链接")) | .[0].key // null) as $idx |
+                ($d.fields | to_entries | map(select(.value == "PR编号")) | .[0].key // null) as $idx |
                 if $idx == null then $d.record_id_list[0]
                 else
                   [ $d.data | to_entries[] | select(
-                    (.value[$idx] | tostring) == $url
+                    (.value[$idx] | tostring) == $num
                   ) | .key ] | .[0] as $row |
                   if $row == null then empty
                   else $d.record_id_list[$row | tonumber]
