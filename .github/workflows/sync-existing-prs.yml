@@ -36,7 +36,7 @@ jobs:
 
       - name: Configure lark-cli
         run: |
-          lark-cli config init --app-id "$LARK_APP_ID" --brand feishu --app-secret-stdin <<< "$LARK_APP_SECRET"
+          echo "$LARK_APP_SECRET" | lark-cli config init --app-id "$LARK_APP_ID" --brand feishu --app-secret-stdin
           lark-cli auth status
 
       - name: Fetch and sync PRs
