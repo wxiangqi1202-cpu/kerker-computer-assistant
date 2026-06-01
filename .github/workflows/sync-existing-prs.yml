@@ -58,7 +58,7 @@ jobs:
           LIMIT: ${{ inputs.limit }}
           REPO: ${{ github.repository }}
         run: |
-          set -euo pipefail
+          set -eo pipefail
 
           GH_ARGS=("--json" "number,title,state,isDraft,author,headRefName,baseRefName,headRefOid,url,body,createdAt,updatedAt,closedAt,mergedAt,mergedBy,labels,milestone,assignees,reviewRequests")
 
@@ -89,6 +89,7 @@ jobs:
 
           FAIL_COUNT=0
           SUCCESS_COUNT=0
+          COMMON=(--base-token "$BITABLE_APP_TOKEN" --table-id "$BITABLE_TABLE_ID" --as bot)
 
           while read -r PR; do
             PR_NUMBER=$(echo "$PR" | jq -r '.number')
@@ -99,7 +100,6 @@ jobs:
             DELETIONS=0
             CHANGED_FILES=0
 
-            # Get stats with retry; on failure skip stats fields to avoid overwriting good data
             STATS_OK=true
             PR_DETAIL=""
             for attempt in 1 2 3; do
@@ -109,19 +109,18 @@ jobs:
               echo "  gh pr view attempt $attempt failed, retrying..."
               sleep 2
               if [ "$attempt" -eq 3 ]; then
-                echo "  ::warning::gh pr view failed after 3 attempts for PR #$PR_NUMBER, stats will be omitted"
+                echo "  ::warning::gh pr view failed after 3 attempts for PR #$PR_NUMBER"
                 STATS_OK=false
               fi
             done
 
             if [ "$STATS_OK" = true ] && [ -n "$PR_DETAIL" ]; then
-              COMMITS=$(echo "$PR_DETAIL" | jq -r '.commits | length // 0')
-              ADDITIONS=$(echo "$PR_DETAIL" | jq -r '.additions // 0')
-              DELETIONS=$(echo "$PR_DETAIL" | jq -r '.deletions // 0')
-              CHANGED_FILES=$(echo "$PR_DETAIL" | jq -r '.changedFiles // 0')
+              COMMITS=$(echo "$PR_DETAIL"  | jq -r '.commits  | length // 0' 2>/dev/null) || COMMITS=0
+              ADDITIONS=$(echo "$PR_DETAIL" | jq -r '.additions // 0' 2>/dev/null)        || ADDITIONS=0
+              DELETIONS=$(echo "$PR_DETAIL" | jq -r '.deletions // 0' 2>/dev/null)        || DELETIONS=0
+              CHANGED_FILES=$(echo "$PR_DETAIL" | jq -r '.changedFiles // 0' 2>/dev/null) || CHANGED_FILES=0
             fi
 
-            # Determine status
             PR_STATE=$(echo "$PR" | jq -r '.state')
             IS_DRAFT=$(echo "$PR" | jq -r '.isDraft')
             MERGED_AT_RAW=$(echo "$PR" | jq -r '.mergedAt // empty')
@@ -154,7 +153,6 @@ jobs:
             REVIEWERS=$(echo "$PR" | jq -r '[.reviewRequests[]? | (.login // .name)] | join(", ")')
             MERGED_BY=$(echo "$PR" | jq -r '.mergedBy.login // empty')
 
-            # Build fields JSON; omit stats fields if gh pr view failed
             if [ "$STATS_OK" = true ]; then
               FIELDS=$(jq -n \
                 --arg title "$TITLE" \
@@ -181,27 +179,13 @@ jobs:
                 --arg assignees "$ASSIGNEES" \
                 --arg reviewers "$REVIEWERS" \
                 '{
-                  "PR标题": $title,
-                  "PR编号": $pr_number,
-                  "作者": $author,
-                  "仓库": $repo,
-                  "状态": $status,
-                  "链接": $url,
-                  "分支名称": $branch,
-                  "目标分支": $base_branch,
-                  "Head SHA": $head_sha,
-                  "PR描述": $body,
-                  "创建时间": $created_at,
-                  "更新时间": $updated_at,
-                  "提交数": $commits,
-                  "新增行数": $additions,
-                  "删除行数": $deletions,
-                  "变更文件数": $changed_files,
-                  "标签": $labels,
-                  "里程碑": $milestone,
-                  "指派人": $assignees,
-                  "审查人": $reviewers,
-                  "合并人": $merged_by
+                  "PR标题": $title, "PR编号": $pr_number,
+                  "作者": $author, "仓库": $repo, "状态": $status, "链接": $url,
+                  "分支名称": $branch, "目标分支": $base_branch, "Head SHA": $head_sha,
+                  "PR描述": $body, "创建时间": $created_at, "更新时间": $updated_at,
+                  "提交数": $commits, "新增行数": $additions, "删除行数": $deletions,
+                  "变更文件数": $changed_files, "标签": $labels, "里程碑": $milestone,
+                  "指派人": $assignees, "审查人": $reviewers, "合并人": $merged_by
                 }
                 | if $closed_at != "" then . + {"关闭时间": $closed_at} else . end
                 | if $merged_at != "" then . + {"合并时间": $merged_at} else . end')
@@ -227,59 +211,41 @@ jobs:
                 --arg assignees "$ASSIGNEES" \
                 --arg reviewers "$REVIEWERS" \
                 '{
-                  "PR标题": $title,
-                  "PR编号": $pr_number,
-                  "作者": $author,
-                  "仓库": $repo,
-                  "状态": $status,
-                  "链接": $url,
-                  "分支名称": $branch,
-                  "目标分支": $base_branch,
-                  "Head SHA": $head_sha,
-                  "PR描述": $body,
-                  "创建时间": $created_at,
-                  "更新时间": $updated_at,
-                  "标签": $labels,
-                  "里程碑": $milestone,
-                  "指派人": $assignees,
-                  "审查人": $reviewers,
-                  "合并人": $merged_by
+                  "PR标题": $title, "PR编号": $pr_number,
+                  "作者": $author, "仓库": $repo, "状态": $status, "链接": $url,
+                  "分支名称": $branch, "目标分支": $base_branch, "Head SHA": $head_sha,
+                  "PR描述": $body, "创建时间": $created_at, "更新时间": $updated_at,
+                  "标签": $labels, "里程碑": $milestone,
+                  "指派人": $assignees, "审查人": $reviewers, "合并人": $merged_by
                 }
                 | if $closed_at != "" then . + {"关闭时间": $closed_at} else . end
                 | if $merged_at != "" then . + {"合并时间": $merged_at} else . end')
             fi
 
-            # Find existing record via temp filtered view
-            COMMON_ARGS=(--base-token "$BITABLE_APP_TOKEN" --table-id "$BITABLE_TABLE_ID" --as bot)
+            # --- Find existing record via temp filtered view ---
             RECORD_ID=""
-
-            VIEW_RESULT=$(lark-cli base +view-create "${COMMON_ARGS[@]}" \
-              --format json \
-              --json '{"name":"_tmp_pr_lookup","type":"grid"}' 2>&1) || true
-            VIEW_ID=$(echo "$VIEW_RESULT" | jq -r '.data.view.view_id // empty')
-
-            if [ -n "$VIEW_ID" ]; then
-              lark-cli base +view-set-filter "${COMMON_ARGS[@]}" \
-                --view-id "$VIEW_ID" \
-                --json "{\"conditions\":[[\"PR编号\",\"==\",$PR_NUMBER]]}" 2>/dev/null || true
-
-              LIST_RESULT=$(lark-cli base +record-list "${COMMON_ARGS[@]}" \
-                --view-id "$VIEW_ID" \
-                --field-id "PR编号" \
-                --format json \
-                --limit 1 2>&1) || true
-
-              if echo "$LIST_RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
-                RECORD_ID=$(echo "$LIST_RESULT" | jq -r '.data.record_id_list[0] // empty')
-              fi
-
-              lark-cli base +view-delete "${COMMON_ARGS[@]}" \
-                --view-id "$VIEW_ID" --yes 2>/dev/null || true
-            else
-              echo "  ::warning::Failed to create temp view for PR #$PR_NUMBER, will create new record"
+            VIEW_ID=""
+            if VIEW_RAW=$(lark-cli base +view-create "${COMMON[@]}" --format json \
+                 --json '{"name":"_tmp_pr_lookup","type":"grid"}' 2>&1); then
+              VIEW_ID=$(echo "$VIEW_RAW" | jq -r '.data.view.view_id // empty' 2>/dev/null) || true
             fi
 
-            # Upsert
+            if [ -n "$VIEW_ID" ]; then
+              lark-cli base +view-set-filter "${COMMON[@]}" \
+                --view-id "$VIEW_ID" \
+                --json "{\"conditions\":[[\"PR编号\",\"==\",\"$PR_NUMBER\"]]}" > /dev/null 2>&1 || true
+
+              if LIST_RAW=$(lark-cli base +record-list "${COMMON[@]}" \
+                   --view-id "$VIEW_ID" --field-id "PR编号" \
+                   --format json --limit 1 2>&1); then
+                RECORD_ID=$(echo "$LIST_RAW" | jq -r '.data.record_id_list[0] // empty' 2>/dev/null) || true
+              fi
+
+              lark-cli base +view-delete "${COMMON[@]}" \
+                --view-id "$VIEW_ID" --yes > /dev/null 2>&1 || true
+            fi
+
+            # --- Upsert ---
             ARGS=(
               --base-token "$BITABLE_APP_TOKEN"
               --table-id "$BITABLE_TABLE_ID"

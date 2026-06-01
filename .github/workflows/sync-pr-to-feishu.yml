@@ -162,32 +162,29 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           RECORD_ID=""
-          COMMON_ARGS=(--base-token "$BITABLE_APP_TOKEN" --table-id "$BITABLE_TABLE_ID" --as bot)
+          COMMON=(--base-token "$BITABLE_APP_TOKEN" --table-id "$BITABLE_TABLE_ID" --as bot)
 
-          VIEW_RESULT=$(lark-cli base +view-create "${COMMON_ARGS[@]}" \
-            --format json \
-            --json '{"name":"_tmp_pr_lookup","type":"grid"}' 2>&1) || true
-          VIEW_ID=$(echo "$VIEW_RESULT" | jq -r '.data.view.view_id // empty')
+          VIEW_ID=""
+          if VIEW_RAW=$(lark-cli base +view-create "${COMMON[@]}" --format json \
+               --json '{"name":"_tmp_pr_lookup","type":"grid"}' 2>&1); then
+            VIEW_ID=$(echo "$VIEW_RAW" | jq -r '.data.view.view_id // empty' 2>/dev/null) || true
+          fi
 
           if [ -n "$VIEW_ID" ]; then
-            lark-cli base +view-set-filter "${COMMON_ARGS[@]}" \
+            lark-cli base +view-set-filter "${COMMON[@]}" \
               --view-id "$VIEW_ID" \
-              --json "{\"conditions\":[[\"PR编号\",\"==\",$PR_NUMBER]]}" 2>/dev/null || true
+              --json "{\"conditions\":[[\"PR编号\",\"==\",\"$PR_NUMBER\"]]}" > /dev/null 2>&1 || true
 
-            LIST_RESULT=$(lark-cli base +record-list "${COMMON_ARGS[@]}" \
-              --view-id "$VIEW_ID" \
-              --field-id "PR编号" \
-              --format json \
-              --limit 1 2>&1) || true
-
-            if echo "$LIST_RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
-              RECORD_ID=$(echo "$LIST_RESULT" | jq -r '.data.record_id_list[0] // empty')
+            if LIST_RAW=$(lark-cli base +record-list "${COMMON[@]}" \
+                 --view-id "$VIEW_ID" --field-id "PR编号" \
+                 --format json --limit 1 2>&1); then
+              RECORD_ID=$(echo "$LIST_RAW" | jq -r '.data.record_id_list[0] // empty' 2>/dev/null) || true
             fi
 
-            lark-cli base +view-delete "${COMMON_ARGS[@]}" \
-              --view-id "$VIEW_ID" --yes 2>/dev/null || true
+            lark-cli base +view-delete "${COMMON[@]}" \
+              --view-id "$VIEW_ID" --yes > /dev/null 2>&1 || true
           else
-            echo "::warning::Failed to create temp view for PR #$PR_NUMBER, will create new record"
+            echo "::warning::Could not create temp view, will create new record"
           fi
 
           echo "Found record_id: ${RECORD_ID:-<none>}"
