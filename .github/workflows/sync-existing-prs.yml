@@ -22,15 +22,21 @@ on:
 jobs:
   sync-existing:
     runs-on: ubuntu-latest
-    if: ${{ secrets.LARK_APP_SECRET != '' }}
     env:
       LARK_APP_ID: ${{ secrets.LARK_APP_ID }}
       LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
       BITABLE_APP_TOKEN: ${{ secrets.BITABLE_APP_TOKEN }}
       BITABLE_TABLE_ID: ${{ secrets.BITABLE_TABLE_ID }}
     steps:
+      - name: Check secrets
+        run: |
+          if [ -z "$LARK_APP_SECRET" ]; then
+            echo "::error::LARK_APP_SECRET is not set, skipping."
+            exit 1
+          fi
+
       - name: Checkout repo
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Install lark-cli
         run: npm install -g @larksuite/cli
