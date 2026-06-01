@@ -9,6 +9,7 @@ on:
 jobs:
   sync-pr:
     runs-on: ubuntu-latest
+    if: ${{ secrets.LARK_APP_SECRET != '' }}
     env:
       LARK_APP_ID: ${{ secrets.LARK_APP_ID }}
       LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
@@ -78,7 +79,6 @@ jobs:
 
           FIELDS=$(jq -n \
             --arg title "$PR_TITLE" \
-            --argjson number "${PR_COMMITS:+$PR_NUMBER}" \
             --arg author "$PR_AUTHOR" \
             --arg repo "$PR_REPO" \
             --arg status "$PR_STATUS" \
