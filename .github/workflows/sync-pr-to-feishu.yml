@@ -162,29 +162,34 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           RECORD_ID=""
-          COMMON=(--base-token "$BITABLE_APP_TOKEN" --table-id "$BITABLE_TABLE_ID" --as bot)
 
-          VIEW_ID=""
-          if VIEW_RAW=$(lark-cli base +view-create "${COMMON[@]}" --format json \
-               --json '{"name":"_tmp_pr_lookup","type":"grid"}' 2>&1); then
-            VIEW_ID=$(echo "$VIEW_RAW" | jq -r '.data.view.view_id // empty' 2>/dev/null) || true
-          fi
+          RESULT=$(lark-cli base +record-search \
+            --base-token "$BITABLE_APP_TOKEN" \
+            --table-id "$BITABLE_TABLE_ID" \
+            --as bot \
+            --format json \
+            --json "{\"keyword\":\"$PR_NUMBER\",\"search_fields\":[\"PR编号\"],\"select_fields\":[\"PR编号\"],\"limit\":50}" 2>&1) || true
 
-          if [ -n "$VIEW_ID" ]; then
-            lark-cli base +view-set-filter "${COMMON[@]}" \
-              --view-id "$VIEW_ID" \
-              --json "{\"conditions\":[[\"PR编号\",\"==\",\"$PR_NUMBER\"]]}" > /dev/null 2>&1 || true
+          echo "Search raw result: $RESULT"
 
-            if LIST_RAW=$(lark-cli base +record-list "${COMMON[@]}" \
-                 --view-id "$VIEW_ID" --field-id "PR编号" \
-                 --format json --limit 1 2>&1); then
-              RECORD_ID=$(echo "$LIST_RAW" | jq -r '.data.record_id_list[0] // empty' 2>/dev/null) || true
-            fi
-
-            lark-cli base +view-delete "${COMMON[@]}" \
-              --view-id "$VIEW_ID" --yes > /dev/null 2>&1 || true
-          else
-            echo "::warning::Could not create temp view, will create new record"
+          if echo "$RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
+            RECORD_ID=$(echo "$RESULT" | jq -r --arg num "$PR_NUMBER" '
+              .data as $d |
+              # columnar format: find row where PR编号 matches exactly
+              if ($d.record_id_list | length) == 0 then empty
+              elif ($d.fields | length) == 0 then $d.record_id_list[0]
+              else
+                ($d.fields | to_entries | map(select(.value == "PR编号")) | .[0].key // null) as $idx |
+                if $idx == null then $d.record_id_list[0]
+                else
+                  [ $d.data | to_entries[] | select(
+                    (.value[$idx] | tostring) == $num
+                  ) | .key ] | .[0] as $row |
+                  if $row == null then empty
+                  else $d.record_id_list[$row | tonumber]
+                  end
+                end
+              end // empty' 2>/dev/null) || true
           fi
 
           echo "Found record_id: ${RECORD_ID:-<none>}"
