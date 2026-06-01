@@ -73,8 +73,16 @@ jobs:
           PR_MILESTONE: ${{ github.event.pull_request.milestone.title }}
           PR_ASSIGNEES: ${{ join(github.event.pull_request.assignees.*.login, ', ') }}
           PR_REVIEWERS: ${{ join(github.event.pull_request.requested_reviewers.*.login, ', ') }}
+          PR_REVIEW_TEAMS: ${{ join(github.event.pull_request.requested_teams.*.slug, ', ') }}
+          REVIEW_AUTHOR: ${{ github.event.review.user.login }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
+          ALL_REVIEWERS=""
+          [ -n "$PR_REVIEWERS" ] && ALL_REVIEWERS="$PR_REVIEWERS"
+          [ -n "$PR_REVIEW_TEAMS" ] && ALL_REVIEWERS="${ALL_REVIEWERS:+$ALL_REVIEWERS, }$PR_REVIEW_TEAMS"
+          [ -n "$REVIEW_AUTHOR" ] && ALL_REVIEWERS="${ALL_REVIEWERS:+$ALL_REVIEWERS, }$REVIEW_AUTHOR"
+          REVIEWERS=$(echo "$ALL_REVIEWERS" | tr ',' '\n' | sed 's/^ *//' | grep -v '^$' | sort -u | paste -sd ', ')
+
           fmt_date() {
             local raw="$1"
             [ -z "$raw" ] || [ "$raw" = "null" ] && echo "" && return
@@ -115,7 +123,7 @@ jobs:
             --arg labels "$PR_LABELS" \
             --arg milestone "${PR_MILESTONE:-}" \
             --arg assignees "$PR_ASSIGNEES" \
-            --arg reviewers "$PR_REVIEWERS" \
+            --arg reviewers "$REVIEWERS" \
             --argjson pr_number "$PR_NUMBER" \
             '{
               "PR标题": $title,
@@ -159,7 +167,7 @@ jobs:
             --table-id "$BITABLE_TABLE_ID" \
             --as bot \
             --format json \
-            --json "{\"keyword\":\"$PR_NUMBER\",\"search_fields\":[\"PR编号\"],\"select_fields\":[\"PR编号\"],\"limit\":50}" 2>&1) || true
+            --json "{\"keyword\":\"$PR_NUMBER\",\"search_fields\":[\"PR编号\"],\"select_fields\":[\"PR编号\"],\"limit\":500}" 2>&1) || true
 
           if echo "$RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
             RECORD_ID=$(echo "$RESULT" | jq -r --argjson num "$PR_NUMBER" '
