@@ -81,7 +81,7 @@ jobs:
           [ -n "$PR_REVIEWERS" ] && ALL_REVIEWERS="$PR_REVIEWERS"
           [ -n "$PR_REVIEW_TEAMS" ] && ALL_REVIEWERS="${ALL_REVIEWERS:+$ALL_REVIEWERS, }$PR_REVIEW_TEAMS"
           [ -n "$REVIEW_AUTHOR" ] && ALL_REVIEWERS="${ALL_REVIEWERS:+$ALL_REVIEWERS, }$REVIEW_AUTHOR"
-          REVIEWERS=$(echo "$ALL_REVIEWERS" | tr ',' '\n' | sed 's/^ *//' | grep -v '^$' | sort -u | paste -sd ', ')
+          REVIEWERS=$(echo "$ALL_REVIEWERS" | tr ',' '\n' | sed 's/^ *//' | grep -v '^$' | sort -u | paste -sd ', ') || true
 
           fmt_date() {
             local raw="$1"
@@ -124,7 +124,7 @@ jobs:
             --arg milestone "${PR_MILESTONE:-}" \
             --arg assignees "$PR_ASSIGNEES" \
             --arg reviewers "$REVIEWERS" \
-            --arg pr_number "$PR_NUMBER" \
+            --argjson pr_number "$PR_NUMBER" \
             '{
               "PR标题": $title,
               "PR编号": $pr_number,
@@ -160,6 +160,7 @@ jobs:
         id: find
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           RECORD_ID=""
 
@@ -168,22 +169,21 @@ jobs:
             --table-id "$BITABLE_TABLE_ID" \
             --as bot \
             --format json \
-            --json "{\"keyword\":\"$PR_NUMBER\",\"search_fields\":[\"PR编号\"],\"select_fields\":[\"PR编号\"],\"limit\":50}" 2>&1) || true
+            --json "{\"keyword\":\"$PR_URL\",\"search_fields\":[\"链接\"],\"select_fields\":[\"链接\"],\"limit\":10}" 2>&1) || true
 
           echo "Search raw result: $RESULT"
 
           if echo "$RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
-            RECORD_ID=$(echo "$RESULT" | jq -r --arg num "$PR_NUMBER" '
+            RECORD_ID=$(echo "$RESULT" | jq -r --arg url "$PR_URL" '
               .data as $d |
-              # columnar format: find row where PR编号 matches exactly
               if ($d.record_id_list | length) == 0 then empty
               elif ($d.fields | length) == 0 then $d.record_id_list[0]
               else
-                ($d.fields | to_entries | map(select(.value == "PR编号")) | .[0].key // null) as $idx |
+                ($d.fields | to_entries | map(select(.value == "链接")) | .[0].key // null) as $idx |
                 if $idx == null then $d.record_id_list[0]
                 else
                   [ $d.data | to_entries[] | select(
-                    (.value[$idx] | tostring) == $num
+                    (.value[$idx] | tostring) == $url
                   ) | .key ] | .[0] as $row |
                   if $row == null then empty
                   else $d.record_id_list[$row | tonumber]
