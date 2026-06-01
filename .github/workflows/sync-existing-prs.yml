@@ -155,7 +155,7 @@ jobs:
             if [ "$STATS_OK" = true ]; then
               FIELDS=$(jq -n \
                 --arg title "$TITLE" \
-                --arg pr_number "[$PR_NUMBER]" \
+                --argjson pr_number "$PR_NUMBER" \
                 --arg author "$AUTHOR" \
                 --arg repo "$REPO" \
                 --arg status "$STATUS" \
@@ -191,7 +191,7 @@ jobs:
             else
               FIELDS=$(jq -n \
                 --arg title "$TITLE" \
-                --arg pr_number "[$PR_NUMBER]" \
+                --argjson pr_number "$PR_NUMBER" \
                 --arg author "$AUTHOR" \
                 --arg repo "$REPO" \
                 --arg status "$STATUS" \
@@ -221,7 +221,7 @@ jobs:
                 | if $merged_at != "" then . + {"合并时间": $merged_at} else . end')
             fi
 
-            # --- Find existing record ---
+            # --- Find existing record by URL (text field, reliable keyword match) ---
             RECORD_ID=""
 
             SEARCH_RESULT=$(lark-cli base +record-search \
@@ -229,19 +229,19 @@ jobs:
               --table-id "$BITABLE_TABLE_ID" \
               --as bot \
               --format json \
-              --json "{\"keyword\":\"[$PR_NUMBER]\",\"search_fields\":[\"PR编号\"],\"select_fields\":[\"PR编号\"],\"limit\":200}" 2>&1) || true
+              --json "{\"keyword\":\"$URL\",\"search_fields\":[\"链接\"],\"select_fields\":[\"链接\"],\"limit\":10}" 2>&1) || true
 
             if echo "$SEARCH_RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
-              RECORD_ID=$(echo "$SEARCH_RESULT" | jq -r --arg num "[$PR_NUMBER]" '
+              RECORD_ID=$(echo "$SEARCH_RESULT" | jq -r --arg url "$URL" '
                 .data as $d |
                 if ($d.record_id_list | length) == 0 then empty
                 elif ($d.fields | length) == 0 then $d.record_id_list[0]
                 else
-                  ($d.fields | to_entries | map(select(.value == "PR编号")) | .[0].key // null) as $idx |
+                  ($d.fields | to_entries | map(select(.value == "链接")) | .[0].key // null) as $idx |
                   if $idx == null then $d.record_id_list[0]
                   else
                     [ $d.data | to_entries[] | select(
-                      (.value[$idx] | tostring) == $num
+                      (.value[$idx] | tostring) == $url
                     ) | .key ] | .[0] as $row |
                     if $row == null then empty
                     else $d.record_id_list[$row | tonumber]
