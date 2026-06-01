@@ -124,7 +124,7 @@ jobs:
             --arg milestone "${PR_MILESTONE:-}" \
             --arg assignees "$PR_ASSIGNEES" \
             --arg reviewers "$REVIEWERS" \
-            --argjson pr_number "$PR_NUMBER" \
+            --arg pr_number "$PR_NUMBER" \
             '{
               "PR标题": $title,
               "PR编号": $pr_number,
@@ -170,7 +170,7 @@ jobs:
             --json "{\"keyword\":\"$PR_NUMBER\",\"search_fields\":[\"PR编号\"],\"select_fields\":[\"PR编号\"],\"limit\":500}" 2>&1) || true
 
           if echo "$RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
-            RECORD_ID=$(echo "$RESULT" | jq -r --argjson num "$PR_NUMBER" '
+            RECORD_ID=$(echo "$RESULT" | jq -r --arg num "$PR_NUMBER" '
               .data as $d |
               if ($d.fields | length) == 0 then empty
               else
@@ -178,8 +178,7 @@ jobs:
                 if $idx == null then empty
                 else
                   [ $d.data | to_entries[] | select(
-                    .value[$idx] == $num or
-                    (.value[$idx] | tostring) == ($num | tostring)
+                    (.value[$idx] | tostring) == $num
                   ) | .key ] | .[0] as $row |
                   if $row == null then empty
                   else $d.record_id_list[$row]
