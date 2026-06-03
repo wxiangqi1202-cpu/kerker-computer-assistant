@@ -137,11 +137,9 @@ jobs:
             --arg assignees "$PR_ASSIGNEES" \
             --arg reviewers "$REVIEWERS" \
             --argjson pr_number "$PR_NUMBER" \
-            --arg pr_index "[$PR_NUMBER]" \
             '{
               "PR标题": $title,
               "PR编号": $pr_number,
-              "PR索引": $pr_index,
               "作者": $author,
               "仓库": $repo,
               "状态": $status,
@@ -178,36 +176,24 @@ jobs:
           set -eo pipefail
           RECORD_ID=""
 
-          RESULT=$(lark-cli base +record-search \
+          RESULT=$(lark-cli base +record-list \
             --base-token "$BITABLE_APP_TOKEN" \
             --table-id "$BITABLE_TABLE_ID" \
             --as bot \
-            --json "{\"keyword\":\"[$PR_NUMBER]\",\"search_fields\":[\"PR索引\"],\"select_fields\":[\"PR索引\"],\"limit\":500}" 2>&1) || true
-
-          echo "::debug::Search result: $RESULT"
+            --format json \
+            --field-id "PR编号" \
+            --filter-json "{\"logic\":\"and\",\"conditions\":[[\"PR编号\",\"==\",$PR_NUMBER]]}" \
+            --limit 1 2>/dev/null) || true
 
           if echo "$RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
-            RECORD_ID=$(echo "$RESULT" | jq -r --arg idx "[$PR_NUMBER]" '
-              .data as $d |
-              if ($d.record_id_list | length) == 0 then empty
-              elif ($d.fields | length) == 0 then $d.record_id_list[0]
-              else
-                ($d.fields | to_entries | map(select(.value == "PR索引")) | .[0].key // null) as $col |
-                if $col == null then $d.record_id_list[0]
-                else
-                  [ $d.data | to_entries[] | select(
-                    (.value[$col] | tostring) == $idx
-                  ) | .key ] | .[0] as $row |
-                  if $row == null then empty
-                  else $d.record_id_list[$row | tonumber]
-                  end
-                end
-              end // empty' 2>/dev/null) || true
-          else
-            echo "::warning::record-search failed or returned error, will create new record"
+            RECORD_ID=$(echo "$RESULT" | jq -r '.data.items[0].record_id // empty' 2>/dev/null) || true
           fi
 
-          echo "Found record_id: ${RECORD_ID:-<none>}"
+          if [ -z "$RECORD_ID" ]; then
+            echo "No existing record found, will create new"
+          else
+            echo "Found existing record: $RECORD_ID"
+          fi
           echo "record_id=$RECORD_ID" >> "$GITHUB_OUTPUT"
 
       - name: Sync to Feishu Bitable
