@@ -149,6 +149,10 @@ jobs:
             if [ -n "$REQUESTED" ]; then ALL_REVIEWERS="$REQUESTED"; fi
             if [ -n "$REVIEW_AUTHORS" ]; then ALL_REVIEWERS="${ALL_REVIEWERS:+$ALL_REVIEWERS, }$REVIEW_AUTHORS"; fi
             REVIEWERS=$(echo "$ALL_REVIEWERS" | tr ',' '\n' | sed 's/^ *//' | grep -v '^$' | sort -u | paste -sd ', ') || true
+            INCLUDE_REVIEWERS=true
+            if [ -z "$REVIEWERS" ]; then
+              INCLUDE_REVIEWERS=false
+            fi
             MERGED_BY=$(echo "$PR" | jq -r '.mergedBy.login // empty')
 
             # Build fields JSON; omit stats fields if gh pr view failed
@@ -177,6 +181,7 @@ jobs:
                 --arg milestone "$MILESTONE" \
                 --arg assignees "$ASSIGNEES" \
                 --arg reviewers "$REVIEWERS" \
+                --argjson include_reviewers "${INCLUDE_REVIEWERS:-false}" \
                 '{
                   "PR标题": $title,
                   "PR编号": $pr_number,
@@ -197,9 +202,9 @@ jobs:
                   "标签": $labels,
                   "里程碑": $milestone,
                   "指派人": $assignees,
-                  "审查人": $reviewers,
                   "合并人": $merged_by
                 }
+                | if $include_reviewers then . + {"审查人": $reviewers} else . end
                 | if $closed_at != "" then . + {"关闭时间": $closed_at} else . end
                 | if $merged_at != "" then . + {"合并时间": $merged_at} else . end')
             else
@@ -223,6 +228,7 @@ jobs:
                 --arg milestone "$MILESTONE" \
                 --arg assignees "$ASSIGNEES" \
                 --arg reviewers "$REVIEWERS" \
+                --argjson include_reviewers "${INCLUDE_REVIEWERS:-false}" \
                 '{
                   "PR标题": $title,
                   "PR编号": $pr_number,
@@ -239,9 +245,9 @@ jobs:
                   "标签": $labels,
                   "里程碑": $milestone,
                   "指派人": $assignees,
-                  "审查人": $reviewers,
                   "合并人": $merged_by
                 }
+                | if $include_reviewers then . + {"审查人": $reviewers} else . end
                 | if $closed_at != "" then . + {"关闭时间": $closed_at} else . end
                 | if $merged_at != "" then . + {"合并时间": $merged_at} else . end')
             fi
