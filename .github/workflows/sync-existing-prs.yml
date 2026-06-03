@@ -245,11 +245,13 @@ jobs:
               --as bot \
               --format json \
               --field-id "PR编号" \
-              --filter-json "{\"logic\":\"and\",\"conditions\":[[\"PR编号\",\"==\",$PR_NUMBER]]}" \
+              --filter-json "{\"logic\":\"and\",\"conditions\":[[\"PR编号\",\"==\",\"$PR_NUMBER\"]]}" \
               --limit 1 2>/dev/null) || true
 
             if echo "$SEARCH_RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
-              RECORD_ID=$(echo "$SEARCH_RESULT" | jq -r '.data.items[0].record_id // empty' 2>/dev/null) || true
+              RECORD_ID=$(echo "$SEARCH_RESULT" | jq -r '
+                (.data.items // []) | if length > 0 then .[0].record_id else empty end
+              ' 2>/dev/null) || true
             else
               echo "  ::warning::record-list failed for PR #$PR_NUMBER, will create new record"
               RECORD_ID=""
