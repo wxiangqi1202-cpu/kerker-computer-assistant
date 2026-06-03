@@ -30,7 +30,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install lark-cli
-        run: npm install -g @larksuite/cli@1.0.44
+        run: npm install -g @larksuite/cli@latest
 
       - name: Configure lark-cli
         run: |
@@ -182,7 +182,7 @@ jobs:
             --as bot \
             --format json \
             --field-id "PR编号" \
-            --filter-json "{\"logic\":\"and\",\"conditions\":[[\"PR编号\",\"==\",\"$PR_NUMBER\"]]}" \
+            --filter-json "{\"logic\":\"and\",\"conditions\":[[\"PR编号\",\"==\",$PR_NUMBER]]}" \
             --limit 1 2>/dev/null) || true
 
           echo "record-list result: $RESULT"

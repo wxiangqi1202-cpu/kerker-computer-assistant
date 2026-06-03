@@ -245,7 +245,7 @@ jobs:
               --as bot \
               --format json \
               --field-id "PR编号" \
-              --filter-json "{\"logic\":\"and\",\"conditions\":[[\"PR编号\",\"==\",\"$PR_NUMBER\"]]}" \
+              --filter-json "{\"logic\":\"and\",\"conditions\":[[\"PR编号\",\"==\",$PR_NUMBER]]}" \
               --limit 1 2>/dev/null) || true
 
             if echo "$SEARCH_RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
