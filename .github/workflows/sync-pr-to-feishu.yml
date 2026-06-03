@@ -95,6 +95,12 @@ jobs:
 
           REVIEWERS=$(echo "$ALL_REVIEWERS" | tr ',' '\n' | sed 's/^ *//' | grep -v '^$' | sort -u | paste -sd ', ') || true
 
+          # If reviewers is empty, we'll omit it from fields to avoid overwriting existing data
+          INCLUDE_REVIEWERS=true
+          if [ -z "$REVIEWERS" ]; then
+            INCLUDE_REVIEWERS=false
+          fi
+
           fmt_date() {
             local raw="$1"
             [ -z "$raw" ] || [ "$raw" = "null" ] && echo "" && return
@@ -136,6 +142,7 @@ jobs:
             --arg milestone "${PR_MILESTONE:-}" \
             --arg assignees "$PR_ASSIGNEES" \
             --arg reviewers "$REVIEWERS" \
+            --argjson include_reviewers "${INCLUDE_REVIEWERS:-false}" \
             --argjson pr_number "$PR_NUMBER" \
             '{
               "PR标题": $title,
@@ -153,9 +160,9 @@ jobs:
               "标签": $labels,
               "里程碑": $milestone,
               "指派人": $assignees,
-              "审查人": $reviewers,
               "合并人": $merged_by
             }
+            | if $include_reviewers then . + {"审查人": $reviewers} else . end
             | if $closed_at != "" then . + {"关闭时间": $closed_at} else . end
             | if $merged_at != "" then . + {"合并时间": $merged_at} else . end')
 

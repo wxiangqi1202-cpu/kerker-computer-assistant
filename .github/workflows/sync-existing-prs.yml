@@ -88,11 +88,11 @@ jobs:
             PR_NUMBER=$(echo "$PR" | jq -r '.number')
             echo "--- Processing PR #$PR_NUMBER ---"
 
-            # Get stats with retry; on failure skip stats fields to avoid overwriting good data
+            # Get stats and reviews with retry
             STATS_OK=true
             PR_DETAIL=""
             for attempt in 1 2 3; do
-              if PR_DETAIL=$(gh pr view "$PR_NUMBER" --json "additions,deletions,changedFiles,commits" 2>/dev/null); then
+              if PR_DETAIL=$(gh pr view "$PR_NUMBER" --json "additions,deletions,changedFiles,commits,reviews" 2>/dev/null); then
                 break
               fi
               echo "  gh pr view attempt $attempt failed, retrying..."
@@ -108,6 +108,9 @@ jobs:
               ADDITIONS=$(echo "$PR_DETAIL" | jq -r '.additions // 0')
               DELETIONS=$(echo "$PR_DETAIL" | jq -r '.deletions // 0')
               CHANGED_FILES=$(echo "$PR_DETAIL" | jq -r '.changedFiles // 0')
+              REVIEW_AUTHORS=$(echo "$PR_DETAIL" | jq -r '[.reviews[].author.login] | unique | join(", ")')
+            else
+              REVIEW_AUTHORS=""
             fi
 
             # Determine status
@@ -140,7 +143,12 @@ jobs:
             LABELS=$(echo "$PR" | jq -r '[.labels[]?.name] | join(", ")')
             MILESTONE=$(echo "$PR" | jq -r '.milestone.title // empty')
             ASSIGNEES=$(echo "$PR" | jq -r '[.assignees[]?.login] | join(", ")')
-            REVIEWERS=$(echo "$PR" | jq -r '[.reviewRequests[]? | (.login // .name)] | join(", ")')
+            # Combine pending requests + actual review authors (already fetched above)
+            REQUESTED=$(echo "$PR" | jq -r '[.reviewRequests[]? | (.login // .name)] | join(", ")')
+            ALL_REVIEWERS=""
+            if [ -n "$REQUESTED" ]; then ALL_REVIEWERS="$REQUESTED"; fi
+            if [ -n "$REVIEW_AUTHORS" ]; then ALL_REVIEWERS="${ALL_REVIEWERS:+$ALL_REVIEWERS, }$REVIEW_AUTHORS"; fi
+            REVIEWERS=$(echo "$ALL_REVIEWERS" | tr ',' '\n' | sed 's/^ *//' | grep -v '^$' | sort -u | paste -sd ', ') || true
             MERGED_BY=$(echo "$PR" | jq -r '.mergedBy.login // empty')
 
             # Build fields JSON; omit stats fields if gh pr view failed
@@ -270,7 +278,13 @@ jobs:
             else
               echo "  Creating new record"
             fi
-            lark-cli base +record-upsert "${ARGS[@]}" > /dev/null
+            for attempt in 1 2 3; do
+              if lark-cli base +record-upsert "${ARGS[@]}" > /dev/null; then
+                break
+              fi
+              echo "  ::warning::Upsert attempt $attempt failed for PR #$PR_NUMBER, retrying..."
+              sleep 2
+            done
 
             sleep 1
           done
