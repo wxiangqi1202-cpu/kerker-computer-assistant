@@ -22,9 +22,6 @@ on:
 jobs:
   sync-existing:
     runs-on: ubuntu-latest
-    concurrency:
-      group: feishu-sync-existing
-      cancel-in-progress: false
     env:
       LARK_APP_ID: ${{ secrets.LARK_APP_ID }}
       LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
@@ -33,7 +30,6 @@ jobs:
     steps:
       - name: Check secrets
         run: |
-          set -euo pipefail
           if [ -z "$LARK_APP_SECRET" ]; then
             echo "::error::LARK_APP_SECRET is not set, skipping."
             exit 1
@@ -43,12 +39,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install lark-cli
-        run: npm install -g @larksuite/cli@1.0.44
+        run: npm install -g @larksuite/cli@latest
 
       - name: Configure lark-cli
         shell: bash
         run: |
-          set -euo pipefail
           echo "$LARK_APP_SECRET" | lark-cli config init --app-id "$LARK_APP_ID" --brand feishu --app-secret-stdin
           lark-cli auth status
 
@@ -60,7 +55,7 @@ jobs:
           LIMIT: ${{ inputs.limit }}
           REPO: ${{ github.repository }}
         run: |
-          set -eo pipefail
+          set -euo pipefail
 
           GH_ARGS=("--json" "number,title,state,isDraft,author,headRefName,baseRefName,headRefOid,url,body,createdAt,updatedAt,closedAt,mergedAt,mergedBy,labels,milestone,assignees,reviewRequests")
 
@@ -89,18 +84,11 @@ jobs:
             date -d "$raw" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$raw"
           }
 
-          FAIL_COUNT=0
-          SUCCESS_COUNT=0
-
-          while read -r PR; do
+          echo "$PRS" | jq -c '.[]' | while read -r PR; do
             PR_NUMBER=$(echo "$PR" | jq -r '.number')
             echo "--- Processing PR #$PR_NUMBER ---"
 
-            COMMITS=0
-            ADDITIONS=0
-            DELETIONS=0
-            CHANGED_FILES=0
-
+            # Get stats and reviews with retry
             STATS_OK=true
             PR_DETAIL=""
             for attempt in 1 2 3; do
@@ -110,18 +98,22 @@ jobs:
               echo "  gh pr view attempt $attempt failed, retrying..."
               sleep 2
               if [ "$attempt" -eq 3 ]; then
-                echo "  ::warning::gh pr view failed after 3 attempts for PR #$PR_NUMBER"
+                echo "  ::warning::gh pr view failed after 3 attempts for PR #$PR_NUMBER, stats will be omitted"
                 STATS_OK=false
               fi
             done
 
             if [ "$STATS_OK" = true ] && [ -n "$PR_DETAIL" ]; then
-              COMMITS=$(echo "$PR_DETAIL"  | jq -r '.commits  | length // 0' 2>/dev/null) || COMMITS=0
-              ADDITIONS=$(echo "$PR_DETAIL" | jq -r '.additions // 0' 2>/dev/null)        || ADDITIONS=0
-              DELETIONS=$(echo "$PR_DETAIL" | jq -r '.deletions // 0' 2>/dev/null)        || DELETIONS=0
-              CHANGED_FILES=$(echo "$PR_DETAIL" | jq -r '.changedFiles // 0' 2>/dev/null) || CHANGED_FILES=0
+              COMMITS=$(echo "$PR_DETAIL" | jq -r '.commits | length // 0')
+              ADDITIONS=$(echo "$PR_DETAIL" | jq -r '.additions // 0')
+              DELETIONS=$(echo "$PR_DETAIL" | jq -r '.deletions // 0')
+              CHANGED_FILES=$(echo "$PR_DETAIL" | jq -r '.changedFiles // 0')
+              REVIEW_AUTHORS=$(echo "$PR_DETAIL" | jq -r '[.reviews[].author.login] | unique | join(", ")')
+            else
+              REVIEW_AUTHORS=""
             fi
 
+            # Determine status
             PR_STATE=$(echo "$PR" | jq -r '.state')
             IS_DRAFT=$(echo "$PR" | jq -r '.isDraft')
             MERGED_AT_RAW=$(echo "$PR" | jq -r '.mergedAt // empty')
@@ -151,94 +143,135 @@ jobs:
             LABELS=$(echo "$PR" | jq -r '[.labels[]?.name] | join(", ")')
             MILESTONE=$(echo "$PR" | jq -r '.milestone.title // empty')
             ASSIGNEES=$(echo "$PR" | jq -r '[.assignees[]?.login] | join(", ")')
+            # Combine pending requests + actual review authors (already fetched above)
+            REQUESTED=$(echo "$PR" | jq -r '[.reviewRequests[]? | (.login // .name)] | join(", ")')
+            ALL_REVIEWERS=""
+            if [ -n "$REQUESTED" ]; then ALL_REVIEWERS="$REQUESTED"; fi
+            if [ -n "$REVIEW_AUTHORS" ]; then ALL_REVIEWERS="${ALL_REVIEWERS:+$ALL_REVIEWERS, }$REVIEW_AUTHORS"; fi
+            REVIEWERS=$(echo "$ALL_REVIEWERS" | tr ',' '\n' | sed 's/^ *//' | grep -v '^$' | sort -u | paste -sd ', ') || true
+            INCLUDE_REVIEWERS=true
+            if [ -z "$REVIEWERS" ]; then
+              INCLUDE_REVIEWERS=false
+            fi
             MERGED_BY=$(echo "$PR" | jq -r '.mergedBy.login // empty')
 
-            # Collect reviewers: pending requests + completed reviews (full history)
-            PENDING_REVIEWERS=$(echo "$PR" | jq -r '[.reviewRequests[]? | (.login // .name)] | join(", ")')
-            COMPLETED_REVIEWERS=""
-            if [ "$STATS_OK" = true ] && [ -n "$PR_DETAIL" ]; then
-              COMPLETED_REVIEWERS=$(echo "$PR_DETAIL" | jq -r '[.reviews[]?.author.login] | unique | join(", ")' 2>/dev/null) || true
-            fi
-            ALL_REVIEWERS=""
-            [ -n "$PENDING_REVIEWERS" ] && ALL_REVIEWERS="$PENDING_REVIEWERS"
-            [ -n "$COMPLETED_REVIEWERS" ] && ALL_REVIEWERS="${ALL_REVIEWERS:+$ALL_REVIEWERS, }$COMPLETED_REVIEWERS"
-            REVIEWERS=$(echo "$ALL_REVIEWERS" | tr ',' '\n' | sed 's/^ *//' | grep -v '^$' | sort -u | paste -sd ', ') || true
-
-            # Build fields JSON (base fields always present)
-            BASE_FIELDS=$(jq -n \
-              --arg title "$TITLE" \
-              --argjson pr_number "$PR_NUMBER" \
-              --arg pr_index "[$PR_NUMBER]" \
-              --arg author "$AUTHOR" \
-              --arg repo "$REPO" \
-              --arg status "$STATUS" \
-              --arg url "$URL" \
-              --arg branch "$BRANCH" \
-              --arg base_branch "$BASE_BRANCH" \
-              --arg head_sha "$HEAD_SHA" \
-              --arg body "$BODY" \
-              --arg created_at "$CREATED_AT" \
-              --arg updated_at "$UPDATED_AT" \
-              --arg closed_at "$CLOSED_AT" \
-              --arg merged_at "$MERGED_AT_FMT" \
-              --arg merged_by "$MERGED_BY" \
-              --arg labels "$LABELS" \
-              --arg milestone "$MILESTONE" \
-              --arg assignees "$ASSIGNEES" \
-              --arg reviewers "$REVIEWERS" \
-              '{
-                "PR标题": $title, "PR编号": $pr_number, "PR索引": $pr_index,
-                "作者": $author, "仓库": $repo, "状态": $status, "链接": $url,
-                "分支名称": $branch, "目标分支": $base_branch, "Head SHA": $head_sha,
-                "PR描述": $body, "创建时间": $created_at, "更新时间": $updated_at,
-                "标签": $labels, "里程碑": $milestone,
-                "指派人": $assignees, "审查人": $reviewers, "合并人": $merged_by
-              }
-              | if $closed_at != "" then . + {"关闭时间": $closed_at} else . end
-              | if $merged_at != "" then . + {"合并时间": $merged_at} else . end')
-
-            # Merge stats if available
+            # Build fields JSON; omit stats fields if gh pr view failed
             if [ "$STATS_OK" = true ]; then
-              STATS_JSON=$(jq -n \
+              FIELDS=$(jq -n \
+                --arg title "$TITLE" \
+                --argjson pr_number "$PR_NUMBER" \
+                --arg author "$AUTHOR" \
+                --arg repo "$REPO" \
+                --arg status "$STATUS" \
+                --arg url "$URL" \
+                --arg branch "$BRANCH" \
+                --arg base_branch "$BASE_BRANCH" \
+                --arg head_sha "$HEAD_SHA" \
+                --arg body "$BODY" \
+                --arg created_at "$CREATED_AT" \
+                --arg updated_at "$UPDATED_AT" \
+                --arg closed_at "$CLOSED_AT" \
+                --arg merged_at "$MERGED_AT_FMT" \
+                --arg merged_by "$MERGED_BY" \
                 --argjson commits "${COMMITS:-0}" \
                 --argjson additions "${ADDITIONS:-0}" \
                 --argjson deletions "${DELETIONS:-0}" \
                 --argjson changed_files "${CHANGED_FILES:-0}" \
-                '{"提交数": $commits, "新增行数": $additions, "删除行数": $deletions, "变更文件数": $changed_files}')
-              FIELDS=$(echo "$BASE_FIELDS" "$STATS_JSON" | jq -s '.[0] * .[1]')
+                --arg labels "$LABELS" \
+                --arg milestone "$MILESTONE" \
+                --arg assignees "$ASSIGNEES" \
+                --arg reviewers "$REVIEWERS" \
+                --argjson include_reviewers "${INCLUDE_REVIEWERS:-false}" \
+                '{
+                  "PR标题": $title,
+                  "PR编号": $pr_number,
+                  "作者": $author,
+                  "仓库": $repo,
+                  "状态": $status,
+                  "链接": $url,
+                  "分支名称": $branch,
+                  "目标分支": $base_branch,
+                  "Head SHA": $head_sha,
+                  "PR描述": $body,
+                  "创建时间": $created_at,
+                  "更新时间": $updated_at,
+                  "提交数": $commits,
+                  "新增行数": $additions,
+                  "删除行数": $deletions,
+                  "变更文件数": $changed_files,
+                  "标签": $labels,
+                  "里程碑": $milestone,
+                  "指派人": $assignees,
+                  "合并人": $merged_by
+                }
+                | if $include_reviewers then . + {"审查人": $reviewers} else . end
+                | if $closed_at != "" then . + {"关闭时间": $closed_at} else . end
+                | if $merged_at != "" then . + {"合并时间": $merged_at} else . end')
             else
-              FIELDS="$BASE_FIELDS"
+              FIELDS=$(jq -n \
+                --arg title "$TITLE" \
+                --argjson pr_number "$PR_NUMBER" \
+                --arg author "$AUTHOR" \
+                --arg repo "$REPO" \
+                --arg status "$STATUS" \
+                --arg url "$URL" \
+                --arg branch "$BRANCH" \
+                --arg base_branch "$BASE_BRANCH" \
+                --arg head_sha "$HEAD_SHA" \
+                --arg body "$BODY" \
+                --arg created_at "$CREATED_AT" \
+                --arg updated_at "$UPDATED_AT" \
+                --arg closed_at "$CLOSED_AT" \
+                --arg merged_at "$MERGED_AT_FMT" \
+                --arg merged_by "$MERGED_BY" \
+                --arg labels "$LABELS" \
+                --arg milestone "$MILESTONE" \
+                --arg assignees "$ASSIGNEES" \
+                --arg reviewers "$REVIEWERS" \
+                --argjson include_reviewers "${INCLUDE_REVIEWERS:-false}" \
+                '{
+                  "PR标题": $title,
+                  "PR编号": $pr_number,
+                  "作者": $author,
+                  "仓库": $repo,
+                  "状态": $status,
+                  "链接": $url,
+                  "分支名称": $branch,
+                  "目标分支": $base_branch,
+                  "Head SHA": $head_sha,
+                  "PR描述": $body,
+                  "创建时间": $created_at,
+                  "更新时间": $updated_at,
+                  "标签": $labels,
+                  "里程碑": $milestone,
+                  "指派人": $assignees,
+                  "合并人": $merged_by
+                }
+                | if $include_reviewers then . + {"审查人": $reviewers} else . end
+                | if $closed_at != "" then . + {"关闭时间": $closed_at} else . end
+                | if $merged_at != "" then . + {"合并时间": $merged_at} else . end')
             fi
 
-            # --- Find existing record by PR索引 keyword ---
-            RECORD_ID=""
-
-            SEARCH_RESULT=$(lark-cli base +record-search \
+            # Find existing record
+            SEARCH_RESULT=$(lark-cli base +record-list \
               --base-token "$BITABLE_APP_TOKEN" \
               --table-id "$BITABLE_TABLE_ID" \
               --as bot \
-              --json "{\"keyword\":\"[$PR_NUMBER]\",\"search_fields\":[\"PR索引\"],\"select_fields\":[\"PR索引\"],\"limit\":500}" 2>&1) || true
+              --format json \
+              --field-id "PR编号" \
+              --filter-json "{\"logic\":\"and\",\"conditions\":[[\"PR编号\",\"==\",$PR_NUMBER]]}" \
+              --limit 1) || true
 
             if echo "$SEARCH_RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
-              RECORD_ID=$(echo "$SEARCH_RESULT" | jq -r --arg idx "[$PR_NUMBER]" '
-                .data as $d |
-                if ($d.record_id_list | length) == 0 then empty
-                elif ($d.fields | length) == 0 then $d.record_id_list[0]
-                else
-                  ($d.fields | to_entries | map(select(.value == "PR索引")) | .[0].key // null) as $col |
-                  if $col == null then $d.record_id_list[0]
-                  else
-                    [ $d.data | to_entries[] | select(
-                      (.value[$col] | tostring) == $idx
-                    ) | .key ] | .[0] as $row |
-                    if $row == null then empty
-                    else $d.record_id_list[$row | tonumber]
-                    end
-                  end
-                end // empty' 2>/dev/null) || true
+              RECORD_ID=$(echo "$SEARCH_RESULT" | jq -r '
+                (.data.record_id_list // []) | if length > 0 then .[0] else empty end
+              ' 2>/dev/null) || true
+            else
+              echo "  ::warning::record-list failed for PR #$PR_NUMBER, will create new record"
+              RECORD_ID=""
             fi
 
-            # --- Upsert ---
+            # Upsert
             ARGS=(
               --base-token "$BITABLE_APP_TOKEN"
               --table-id "$BITABLE_TABLE_ID"
@@ -251,17 +284,15 @@ jobs:
             else
               echo "  Creating new record"
             fi
-            if lark-cli base +record-upsert "${ARGS[@]}" > /dev/null 2>&1; then
-              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
-            else
-              echo "  ::warning::upsert failed for PR #$PR_NUMBER, skipping"
-              FAIL_COUNT=$((FAIL_COUNT + 1))
-            fi
+            for attempt in 1 2 3; do
+              if lark-cli base +record-upsert "${ARGS[@]}" > /dev/null; then
+                break
+              fi
+              echo "  ::warning::Upsert attempt $attempt failed for PR #$PR_NUMBER, retrying..."
+              sleep 2
+            done
 
             sleep 1
-          done < <(echo "$PRS" | jq -c '.[]')
+          done
 
-          echo "=== Sync complete: $SUCCESS_COUNT succeeded, $FAIL_COUNT failed ==="
-          if [ "$FAIL_COUNT" -gt 0 ]; then
-            echo "::warning::$FAIL_COUNT PR(s) failed to sync"
-          fi
+          echo "=== Sync complete ==="

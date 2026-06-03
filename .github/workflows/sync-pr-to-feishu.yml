@@ -21,7 +21,6 @@ jobs:
     steps:
       - name: Check secrets
         run: |
-          set -euo pipefail
           if [ -z "$LARK_APP_SECRET" ]; then
             echo "::error::LARK_APP_SECRET is not set, skipping."
             exit 1
@@ -31,18 +30,16 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install lark-cli
-        run: npm install -g @larksuite/cli@1.0.44
+        run: npm install -g @larksuite/cli@latest
 
       - name: Configure lark-cli
         run: |
-          set -euo pipefail
           echo "$LARK_APP_SECRET" | lark-cli config init --app-id "$LARK_APP_ID" --brand feishu --app-secret-stdin
           lark-cli auth status
 
       - name: Determine PR Status
         id: status
         run: |
-          set -euo pipefail
           if [ "${{ github.event.pull_request.merged }}" = "true" ]; then
             echo "pr_status=Merged" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event.action }}" = "closed" ]; then
@@ -84,19 +81,25 @@ jobs:
           REVIEW_AUTHOR: ${{ github.event.review.user.login }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
-          set -euo pipefail
+          set -eo pipefail
 
           # Collect reviewers from event payload (pending + current review author)
           ALL_REVIEWERS=""
-          [ -n "$PR_REVIEWERS" ] && ALL_REVIEWERS="$PR_REVIEWERS"
-          [ -n "$PR_REVIEW_TEAMS" ] && ALL_REVIEWERS="${ALL_REVIEWERS:+$ALL_REVIEWERS, }$PR_REVIEW_TEAMS"
-          [ -n "$REVIEW_AUTHOR" ] && ALL_REVIEWERS="${ALL_REVIEWERS:+$ALL_REVIEWERS, }$REVIEW_AUTHOR"
+          if [ -n "$PR_REVIEWERS" ]; then ALL_REVIEWERS="$PR_REVIEWERS"; fi
+          if [ -n "$PR_REVIEW_TEAMS" ]; then ALL_REVIEWERS="${ALL_REVIEWERS:+$ALL_REVIEWERS, }$PR_REVIEW_TEAMS"; fi
+          if [ -n "$REVIEW_AUTHOR" ]; then ALL_REVIEWERS="${ALL_REVIEWERS:+$ALL_REVIEWERS, }$REVIEW_AUTHOR"; fi
 
           # Also fetch completed reviewers from GitHub API for full history
           COMPLETED_REVIEWERS=$(gh pr view "$PR_NUMBER" --json reviews --jq '[.reviews[].author.login] | unique | join(", ")' 2>/dev/null) || true
-          [ -n "$COMPLETED_REVIEWERS" ] && ALL_REVIEWERS="${ALL_REVIEWERS:+$ALL_REVIEWERS, }$COMPLETED_REVIEWERS"
+          if [ -n "$COMPLETED_REVIEWERS" ]; then ALL_REVIEWERS="${ALL_REVIEWERS:+$ALL_REVIEWERS, }$COMPLETED_REVIEWERS"; fi
 
           REVIEWERS=$(echo "$ALL_REVIEWERS" | tr ',' '\n' | sed 's/^ *//' | grep -v '^$' | sort -u | paste -sd ', ') || true
+
+          # If reviewers is empty, we'll omit it from fields to avoid overwriting existing data
+          INCLUDE_REVIEWERS=true
+          if [ -z "$REVIEWERS" ]; then
+            INCLUDE_REVIEWERS=false
+          fi
 
           fmt_date() {
             local raw="$1"
@@ -139,12 +142,11 @@ jobs:
             --arg milestone "${PR_MILESTONE:-}" \
             --arg assignees "$PR_ASSIGNEES" \
             --arg reviewers "$REVIEWERS" \
+            --argjson include_reviewers "${INCLUDE_REVIEWERS:-false}" \
             --argjson pr_number "$PR_NUMBER" \
-            --arg pr_index "[$PR_NUMBER]" \
             '{
               "PR标题": $title,
               "PR编号": $pr_number,
-              "PR索引": $pr_index,
               "作者": $author,
               "仓库": $repo,
               "状态": $status,
@@ -158,9 +160,9 @@ jobs:
               "标签": $labels,
               "里程碑": $milestone,
               "指派人": $assignees,
-              "审查人": $reviewers,
               "合并人": $merged_by
             }
+            | if $include_reviewers then . + {"审查人": $reviewers} else . end
             | if $closed_at != "" then . + {"关闭时间": $closed_at} else . end
             | if $merged_at != "" then . + {"合并时间": $merged_at} else . end')
 
@@ -178,46 +180,38 @@ jobs:
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          set -euo pipefail
+          set -eo pipefail
           RECORD_ID=""
 
-          RESULT=$(lark-cli base +record-search \
+          RESULT=$(lark-cli base +record-list \
             --base-token "$BITABLE_APP_TOKEN" \
             --table-id "$BITABLE_TABLE_ID" \
             --as bot \
-            --json "{\"keyword\":\"[$PR_NUMBER]\",\"search_fields\":[\"PR索引\"],\"select_fields\":[\"PR索引\"],\"limit\":500}" 2>&1) || true
+            --format json \
+            --field-id "PR编号" \
+            --filter-json "{\"logic\":\"and\",\"conditions\":[[\"PR编号\",\"==\",$PR_NUMBER]]}" \
+            --limit 1) || true
 
-          echo "::debug::Search result: $RESULT"
+          echo "::debug::record-list result: $RESULT"
 
           if echo "$RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
-            RECORD_ID=$(echo "$RESULT" | jq -r --arg idx "[$PR_NUMBER]" '
-              .data as $d |
-              if ($d.record_id_list | length) == 0 then empty
-              elif ($d.fields | length) == 0 then $d.record_id_list[0]
-              else
-                ($d.fields | to_entries | map(select(.value == "PR索引")) | .[0].key // null) as $col |
-                if $col == null then $d.record_id_list[0]
-                else
-                  [ $d.data | to_entries[] | select(
-                    (.value[$col] | tostring) == $idx
-                  ) | .key ] | .[0] as $row |
-                  if $row == null then empty
-                  else $d.record_id_list[$row | tonumber]
-                  end
-                end
-              end // empty' 2>/dev/null) || true
-          else
-            echo "::warning::record-search failed or returned error, will create new record"
+            RECORD_ID=$(echo "$RESULT" | jq -r '
+              (.data.record_id_list // []) | if length > 0 then .[0] else empty end
+            ' 2>/dev/null) || true
           fi
 
-          echo "Found record_id: ${RECORD_ID:-<none>}"
+          if [ -z "$RECORD_ID" ]; then
+            echo "No existing record found, will create new"
+          else
+            echo "Found existing record: $RECORD_ID"
+          fi
           echo "record_id=$RECORD_ID" >> "$GITHUB_OUTPUT"
 
       - name: Sync to Feishu Bitable
         env:
           RECORD_ID: ${{ steps.find.outputs.record_id }}
         run: |
-          set -euo pipefail
+          set -eo pipefail
           FIELDS=$(cat /tmp/fields.json)
           ARGS=(
             --base-token "$BITABLE_APP_TOKEN"
