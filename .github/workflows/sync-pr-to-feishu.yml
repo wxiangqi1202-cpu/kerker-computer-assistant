@@ -183,9 +183,9 @@ jobs:
             --format json \
             --field-id "PR编号" \
             --filter-json "{\"logic\":\"and\",\"conditions\":[[\"PR编号\",\"==\",$PR_NUMBER]]}" \
-            --limit 1 2>/dev/null) || true
+            --limit 1) || true
 
-          echo "record-list result: $RESULT"
+          echo "::debug::record-list result: $RESULT"
 
           if echo "$RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
             RECORD_ID=$(echo "$RESULT" | jq -r '

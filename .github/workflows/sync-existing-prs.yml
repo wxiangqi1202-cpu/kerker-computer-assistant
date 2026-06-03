@@ -39,7 +39,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install lark-cli
-        run: npm install -g @larksuite/cli
+        run: npm install -g @larksuite/cli@latest
 
       - name: Configure lark-cli
         shell: bash
@@ -246,7 +246,7 @@ jobs:
               --format json \
               --field-id "PR编号" \
               --filter-json "{\"logic\":\"and\",\"conditions\":[[\"PR编号\",\"==\",$PR_NUMBER]]}" \
-              --limit 1 2>/dev/null) || true
+              --limit 1) || true
 
             if echo "$SEARCH_RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
               RECORD_ID=$(echo "$SEARCH_RESULT" | jq -r '
