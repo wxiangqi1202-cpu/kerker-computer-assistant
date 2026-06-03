@@ -250,7 +250,7 @@ jobs:
 
             if echo "$SEARCH_RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
               RECORD_ID=$(echo "$SEARCH_RESULT" | jq -r '
-                (.data.items // []) | if length > 0 then .[0].record_id else empty end
+                (.data.record_id_list // []) | if length > 0 then .[0] else empty end
               ' 2>/dev/null) || true
             else
               echo "  ::warning::record-list failed for PR #$PR_NUMBER, will create new record"
