@@ -33,7 +33,6 @@ jobs:
     steps:
       - name: Check secrets
         run: |
-          set -euo pipefail
           if [ -z "$LARK_APP_SECRET" ]; then
             echo "::error::LARK_APP_SECRET is not set, skipping."
             exit 1
@@ -48,7 +47,6 @@ jobs:
       - name: Configure lark-cli
         shell: bash
         run: |
-          set -euo pipefail
           echo "$LARK_APP_SECRET" | lark-cli config init --app-id "$LARK_APP_ID" --brand feishu --app-secret-stdin
           lark-cli auth status
 
@@ -160,8 +158,8 @@ jobs:
               COMPLETED_REVIEWERS=$(echo "$PR_DETAIL" | jq -r '[.reviews[]?.author.login] | unique | join(", ")' 2>/dev/null) || true
             fi
             ALL_REVIEWERS=""
-            [ -n "$PENDING_REVIEWERS" ] && ALL_REVIEWERS="$PENDING_REVIEWERS"
-            [ -n "$COMPLETED_REVIEWERS" ] && ALL_REVIEWERS="${ALL_REVIEWERS:+$ALL_REVIEWERS, }$COMPLETED_REVIEWERS"
+            if [ -n "$PENDING_REVIEWERS" ]; then ALL_REVIEWERS="$PENDING_REVIEWERS"; fi
+            if [ -n "$COMPLETED_REVIEWERS" ]; then ALL_REVIEWERS="${ALL_REVIEWERS:+$ALL_REVIEWERS, }$COMPLETED_REVIEWERS"; fi
             REVIEWERS=$(echo "$ALL_REVIEWERS" | tr ',' '\n' | sed 's/^ *//' | grep -v '^$' | sort -u | paste -sd ', ') || true
 
             # Build fields JSON (base fields always present)
