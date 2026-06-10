@@ -19,6 +19,7 @@ ASCEND_DEV_PROMPT = """\
 优化前保存可用版本，优化时检查精度差异。
 
 你可以使用 read_file 读取用户代码，run_shell 执行编译和测试。
+遇到编译错误或运行时异常时，可以调用 agent_ascend_debug 子智能体协助诊断。
 回答使用中文，给出具体代码示例。\
 """
 
@@ -30,4 +31,5 @@ class AscendDev(SubAgent):
     model = "deepseek-v4-pro"
     system_prompt = ASCEND_DEV_PROMPT
     allowed_skills = ["read_file", "write_file", "run_shell"]
+    can_call_agents = True
     max_turns = 6

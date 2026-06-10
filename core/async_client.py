@@ -53,11 +53,54 @@ def _extract_usage(usage_obj):
     }
 
 
+def _try_auto_route(messages):
+    """
+    检查最后一条 user 消息，判断是否需要自动注入路由指令。
+    返回需要追加的消息列表（可能为空）。
+    """
+    from agents.router import route, RouteDecision
+    from agents import get_all_agents
+
+    user_msgs = [m for m in messages if m.get("role") == "user"]
+    if not user_msgs:
+        return None
+
+    last_user = user_msgs[-1].get("content", "")
+    available = set(get_all_agents().keys())
+    decision = route(last_user, available)
+
+    if decision.action == RouteDecision.PLAN:
+        return [{
+            "role": "system",
+            "content": (
+                "[自动路由] 检测到复杂任务，请先调用 agent_planner 进行任务规划，"
+                "然后根据规划结果依次调用相应子智能体执行。不要直接回答。"
+            ),
+        }]
+
+    if decision.action == RouteDecision.SINGLE_AGENT and decision.agent_name:
+        return [{
+            "role": "system",
+            "content": (
+                f"[自动路由] 检测到该任务适合由 {decision.agent_name} 处理，"
+                f"请调用 agent_{decision.agent_name} 执行此任务。"
+            ),
+        }]
+
+    return None
+
+
 async def send(client, messages):
     """
     异步发送消息并自动处理工具调用循环。
+    支持自动路由：对复杂任务自动注入 planner 调用。
     async generator，yield 事件 dict。
     """
+    if config.AUTO_ROUTE:
+        yield_from = _try_auto_route(messages)
+        if yield_from:
+            for msg in yield_from:
+                messages.append(msg)
     while True:
         kwargs = _build_kwargs(messages)
         response = await client.chat.completions.create(**kwargs)
