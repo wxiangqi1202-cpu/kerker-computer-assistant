@@ -74,7 +74,9 @@ def _try_auto_route(messages):
             "role": "system",
             "content": (
                 "[自动路由] 检测到复杂任务，请先调用 agent_planner 进行任务规划，"
-                "然后根据规划结果依次调用相应子智能体执行。不要直接回答。"
+                "然后严格按照规划的步骤顺序，逐个调用相应子智能体执行。"
+                "重要：每次只调用一个子智能体，等它返回结果后再调用下一个，不要并行调用多个。"
+                "全部步骤完成后再给出最终总结回复。"
             ),
         }]
 
@@ -134,22 +136,12 @@ async def send(client, messages):
         agent_calls = [tc for tc in tool_calls if tc["name"].startswith("agent_")]
         other_calls = [tc for tc in tool_calls if not tc["name"].startswith("agent_")]
 
-        async def _exec_tool(tc):
+        for tc in agent_calls:
             tool_result = await skills.async_call(tc["name"], tc["args"])
-            return tc, tool_result
+            yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
+            messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})
 
-        calls_to_run = []
-        if len(agent_calls) > 1:
-            results_list = await asyncio.gather(*[_exec_tool(tc) for tc in agent_calls])
-            for tc, tool_result in results_list:
-                yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
-                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})
-        else:
-            calls_to_run.extend(agent_calls)
-
-        calls_to_run.extend(other_calls)
-
-        for tc in calls_to_run:
+        for tc in other_calls:
             tool_result = await skills.async_call(tc["name"], tc["args"])
             yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})

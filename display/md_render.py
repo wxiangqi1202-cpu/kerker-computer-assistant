@@ -253,6 +253,7 @@ def _render_code_block(block, indent, content_width):
         syntax = Syntax(
             code, lang,
             theme=t["code_theme"],
+            background_color=t.get("code_background", "default"),
             line_numbers=False,
             word_wrap=True,
             padding=(0, 1),

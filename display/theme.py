@@ -48,6 +48,7 @@ BUILTIN_THEMES = {
         "code_lang_style": _c("38;5;242"),
         "code_border": _c("38;5;238"),
         "code_theme": "monokai",
+        "code_background": "default",
 
         "table_header": _c("1;38;5;75"),
         "table_cell": _c("38;5;252"),
@@ -90,6 +91,7 @@ BUILTIN_THEMES = {
         "code_lang_style": _c("38;5;242"),
         "code_border": _c("38;5;238"),
         "code_theme": "monokai",
+        "code_background": "default",
 
         "table_header": _c("1;38;5;216"),
         "table_cell": _c("38;5;252"),

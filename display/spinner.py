@@ -95,7 +95,7 @@ class Spinner:
 
     def update_sub(self, name, tips):
         with self._lock:
-            self._sub_lines[name] = _TipLine(tips)
+            self._sub_lines[name] = (_TipLine(tips), time.time())
 
     def remove_sub(self, name):
         with self._lock:
@@ -148,9 +148,13 @@ class Spinner:
             time.sleep(0.08)
 
     def _render_frame(self, spin_idx):
+        now = time.time()
         with self._lock:
             main = self._main_line
-            subs = list(self._sub_lines.items())
+            expired = [k for k, (_, born) in self._sub_lines.items() if now - born > 300]
+            for k in expired:
+                self._sub_lines.pop(k, None)
+            subs = [(k, v) for k, (v, _) in self._sub_lines.items()]
 
         task_lines = self._taskboard.get_lines() if self._taskboard else []
         total_lines = 1 + len(subs) + len(task_lines)
@@ -188,10 +192,10 @@ class Spinner:
     def stop(self, final_message=None):
         self._running = False
         if self._thread:
-            self._thread.join()
+            self._thread.join(timeout=2.0)
             self._thread = None
         if self._key_thread:
-            self._key_thread.join(timeout=0.3)
+            self._key_thread.join(timeout=0.5)
             self._key_thread = None
         self._exit_cbreak()
 
@@ -210,5 +214,6 @@ class Spinner:
 
         self._start_time = None
         self._main_line = None
-        self._sub_lines.clear()
+        with self._lock:
+            self._sub_lines.clear()
         self._line_count = 0
