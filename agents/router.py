@@ -1,61 +1,86 @@
 """
-自动路由层 —— 程序级判定是否需要规划，替代纯 prompt 暗示
+自动路由层 —— 中英文双语支持
 根据用户输入特征 + 对话上下文决定：直接回答 / 自动注入 planner / 指定单个 agent
 
-判定优先级：
-  0. 上下文继承（上轮刚完成规划，短指令继承 plan 模式）
-  1. 简单对话 → DIRECT
-  2. 复杂度评分 ≥ 2 → PLAN
-  3. 专属 Agent 关键词 → SINGLE_AGENT
-  4. 默认 → DIRECT
+评分体系：
+  结构信号（然后/then/first...）           每命中 +1
+  动作词（搜索/search/分析/analyze...）    ≥2个 +2, 1个 +1
+  逗号/and/then ≥2                        +1
+  长文本 >60字符                           +1
+  询问类（介绍/what is/explain...）        -2
+  总分 ≥2 → PLAN
 """
 
 import re
 
-_COMPLEX_SIGNALS = [
-    re.compile(r"(步骤|流程|方案|计划|阶段)"),
+_I = re.IGNORECASE
+
+_STRUCTURE_SIGNALS = [
     re.compile(r"(首先|然后|接着|最后|第[一二三四五六七]|分别)"),
+    re.compile(r"(先|再|接下来|之后|完成后)"),
     re.compile(r"(并且|同时|以及).+(并且|同时|以及|还要)"),
     re.compile(r"(从.+到.+再到)"),
     re.compile(r"(写一个|开发一个|实现一个|搭建一个|构建).{4,}"),
     re.compile(r"包括.{2,}(和|、|以及|还有|与)"),
     re.compile(r"(、).{1,6}(、)"),
-    re.compile(r"(先|再|接下来|之后|完成后)"),
+    re.compile(r"(步骤|流程|方案|计划|阶段)"),
+    re.compile(r"\b(first|then|after that|finally|next|step \d|phase)\b", _I),
+    re.compile(r"\b(and then|before|once done|afterward)\b", _I),
+    re.compile(r"\b(including|consists? of)\b.+(and|,)", _I),
+    re.compile(r"\b(build|create|develop|implement|write)\b.{10,}", _I),
 ]
 
-_ACTION_WORDS = re.compile(
-    r"(分析|对比|调研|设计|规划|评估|总结|整理|梳理|编写|实现|测试|部署|搭建|优化|重构|审查|开发|撰写|生成|选型|排查)"
+_ACTION_WORDS_ZH = re.compile(
+    r"(分析|对比|调研|设计|规划|评估|总结|整理|梳理|编写|实现|测试|部署"
+    r"|搭建|优化|重构|审查|开发|撰写|生成|选型|排查"
+    r"|搜索|查找|查询|检索|翻译|转换|发送|推送|通知"
+    r"|下载|上传|导入|导出|读取|写入|创建|删除|修改"
+    r"|安装|配置|编译|运行|调试|监控|备份|迁移|清理)"
+)
+
+_ACTION_WORDS_EN = re.compile(
+    r"\b(analy[zs]e|compare|research|design|plan|evaluate|summarize|organize"
+    r"|write|implement|test|deploy|build|optimize|refactor|review|develop|generate"
+    r"|search|find|translate|convert|send|notify|push"
+    r"|download|upload|import|export|read|create|delete|modify|update"
+    r"|install|configure|compile|run|debug|monitor|backup|migrate|clean"
+    r"|fetch|scrape|parse|format|check|fix|setup|connect)\b", _I
 )
 
 _INQUIRY_PATTERNS = [
     re.compile(r"(介绍|解释|说明|描述|讲解|讲一下|说一下|是什么|什么是|怎么理解|有哪些|区别)"),
     re.compile(r"^(什么|哪些|怎么|如何|为什么|能不能).{0,6}(步骤|流程|方案|阶段|区别|概念|原理)"),
+    re.compile(r"\b(what is|what are|explain|describe|tell me about|how does)\b", _I),
+    re.compile(r"^(what|how|why|can you)\b.{0,15}\??\s*$", _I),
 ]
 
 _DIRECT_AGENT_KEYWORDS = {
     "code_reviewer": [
-        re.compile(r"(审查|review|代码检查|code review|帮我看看.{0,6}代码|检查.{0,6}代码)"),
+        re.compile(r"(审查|代码检查|帮我看看.{0,6}代码|检查.{0,6}代码)"),
+        re.compile(r"\b(review|code review|check.{0,8}code|audit.{0,8}code)\b", _I),
     ],
     "ascend_dev": [
-        re.compile(r"(算子开发|AscendC|ascendc|写一个算子|Tiling|tiling)"),
+        re.compile(r"(算子开发|AscendC|ascendc|写一个算子|Tiling|tiling)", _I),
     ],
     "ascend_debug": [
-        re.compile(r"(算子调试|算子报错|编译.{0,6}错|npu.{0,4}error|ccec)"),
+        re.compile(r"(算子调试|算子报错|编译.{0,6}错|npu.{0,4}error|ccec)", _I),
     ],
     "researcher": [
         re.compile(r"(搜索|搜一下|查一下|查找|调研|了解一下|最新|新闻|动态)"),
+        re.compile(r"\b(search|look up|find out|latest|news|trending)\b", _I),
     ],
 }
 
 _SIMPLE_PATTERNS = [
     re.compile(r"^.{0,5}$"),
-    re.compile(r"^(你好|hi|hello|谢谢|ok|好的|嗯|是的|不是|什么是)"),
-    re.compile(r"^(几点|时间|天气|日期)"),
+    re.compile(r"^(你好|hi|hello|hey|thanks?|谢谢|ok|好的|嗯|是的|不是|什么是|yes|no|sure|nope)\s*$", _I),
+    re.compile(r"^(几点|时间|天气|日期|time|weather|date)\b", _I),
 ]
 
 _CONTINUE_PATTERNS = [
-    re.compile(r"^(好的|ok|开始|继续|执行|go|来吧|干吧|开搞|走起|开始吧|那就).{0,10}$"),
+    re.compile(r"^(好的|ok|开始|继续|执行|go|来吧|干吧|开搞|走起|开始吧|那就).{0,10}$", _I),
     re.compile(r"^(按照|按|根据).{0,8}(方案|规划|计划|步骤|执行|做|来)"),
+    re.compile(r"^(go ahead|proceed|continue|start|do it|let'?s go|yes.{0,5}do it)\s*$", _I),
 ]
 
 
@@ -77,19 +102,25 @@ class RouteDecision:
 
 def _calc_complexity(text):
     score = 0
-    for pat in _COMPLEX_SIGNALS:
+
+    for pat in _STRUCTURE_SIGNALS:
         if pat.search(text):
             score += 1
 
-    action_hits = len(set(_ACTION_WORDS.findall(text)))
-    if action_hits >= 3:
-        score += 2
-    elif action_hits >= 2:
-        score += 2
+    actions_zh = set(_ACTION_WORDS_ZH.findall(text))
+    actions_en = set(_ACTION_WORDS_EN.findall(text.lower()))
+    action_hits = len(actions_zh) + len(actions_en)
 
-    if len(text) > 80:
+    if action_hits >= 2:
+        score += 2
+    elif action_hits >= 1:
         score += 1
-    if text.count("，") + text.count(",") >= 2:
+
+    if len(text) > 60:
+        score += 1
+
+    separators = text.count("，") + text.count(",") + text.lower().count(" and ") + text.lower().count(" then ")
+    if separators >= 2:
         score += 1
 
     for pat in _INQUIRY_PATTERNS:
@@ -101,7 +132,6 @@ def _calc_complexity(text):
 
 
 def _check_continue(text):
-    """检测是否为继续/确认类指令"""
     for pat in _CONTINUE_PATTERNS:
         if pat.search(text.strip()):
             return True
@@ -111,7 +141,6 @@ def _check_continue(text):
 def route(user_input, available_agents=None, context=None):
     """
     判定优先级: 上下文继承 → 简单对话 → 复杂任务 → agent关键词 → 默认
-    context: AgentContext 实例，用于感知上一轮状态
     """
     text = user_input.strip()
 

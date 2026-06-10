@@ -65,27 +65,57 @@ def _is_similar(a, b):
     return False
 
 
+def _extract_first_json(text):
+    """从文本中提取第一个完整的 JSON 对象（括号配对）"""
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape:
+            escape = False
+            continue
+        if ch == '\\':
+            escape = True
+            continue
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return None
+
+
 def _parse_planner_result(text):
-    """从 planner 返回文本中解析 JSON 任务列表（含 agent 绑定），模糊去重"""
+    """从 planner 返回文本中提取第一个完整 JSON，解析任务列表，模糊去重"""
     try:
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        if start >= 0 and end > start:
-            data = json.loads(text[start:end])
-            tasks = data.get("tasks", [])
-            result = []
-            for t in tasks:
-                step = t.get("step", "").strip()
-                if not step:
-                    continue
-                duplicate = False
-                for existing in result:
-                    if _is_similar(step, existing["step"]):
-                        duplicate = True
-                        break
-                if not duplicate:
-                    result.append({"step": step, "agent": t.get("agent", "")})
-            return result
+        json_str = _extract_first_json(text)
+        if not json_str:
+            return []
+        data = json.loads(json_str)
+        tasks = data.get("tasks", [])
+        result = []
+        for t in tasks:
+            step = t.get("step", "").strip()
+            if not step:
+                continue
+            duplicate = False
+            for existing in result:
+                if _is_similar(step, existing["step"]):
+                    duplicate = True
+                    break
+            if not duplicate:
+                result.append({"step": step, "agent": t.get("agent", "")})
+        return result
     except Exception:
         pass
     return []
