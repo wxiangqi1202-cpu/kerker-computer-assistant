@@ -2,9 +2,13 @@ name: Sync PR to Feishu Bitable
 
 on:
   pull_request:
-    types: [opened, closed, reopened, edited, synchronize, converted_to_draft, ready_for_review]
+    types: [opened, closed, reopened, edited, synchronize, converted_to_draft, ready_for_review, labeled, unlabeled, milestoned, demilestoned, assigned, unassigned, review_requested, review_request_removed]
   pull_request_review:
     types: [submitted]
+
+permissions:
+  contents: read
+  pull-requests: read
 
 jobs:
   sync-pr:
@@ -183,22 +187,30 @@ jobs:
           set -eo pipefail
           RECORD_ID=""
 
-          RESULT=$(lark-cli base +record-list \
-            --base-token "$BITABLE_APP_TOKEN" \
-            --table-id "$BITABLE_TABLE_ID" \
-            --as bot \
-            --format json \
-            --field-id "PR编号" \
-            --filter-json "{\"logic\":\"and\",\"conditions\":[[\"PR编号\",\"==\",$PR_NUMBER]]}" \
-            --limit 1) || true
+          for attempt in 1 2 3; do
+            RESULT=$(lark-cli base +record-list \
+              --base-token "$BITABLE_APP_TOKEN" \
+              --table-id "$BITABLE_TABLE_ID" \
+              --as bot \
+              --format json \
+              --field-id "PR编号" \
+              --filter-json "{\"logic\":\"and\",\"conditions\":[[\"PR编号\",\"==\",$PR_NUMBER]]}" \
+              --limit 1) || true
 
-          echo "::debug::record-list result: $RESULT"
+            if echo "$RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
+              RECORD_ID=$(echo "$RESULT" | jq -r '
+                (.data.record_id_list // []) | if length > 0 then .[0] else empty end
+              ' 2>/dev/null) || true
+              break
+            fi
 
-          if echo "$RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
-            RECORD_ID=$(echo "$RESULT" | jq -r '
-              (.data.record_id_list // []) | if length > 0 then .[0] else empty end
-            ' 2>/dev/null) || true
-          fi
+            echo "::warning::record-list attempt $attempt failed for PR #$PR_NUMBER, retrying..."
+            sleep 2
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::record-list API failed after 3 attempts for PR #$PR_NUMBER"
+              exit 1
+            fi
+          done
 
           if [ -z "$RECORD_ID" ]; then
             echo "No existing record found, will create new"
