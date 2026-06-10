@@ -7,18 +7,15 @@ spinner 全程运行直到回复完成，然后一次性 Markdown 渲染。
 import sys
 import asyncio
 from rich.console import Console
-from rich.markdown import Markdown
 
 from display.spinner import (
     Spinner,
     THINKING_TIPS, GENERATING_TIPS, TOOL_TIPS, AGENT_TIPS,
 )
 from display.timer import Timer
+from display.md_render import print_markdown
 
 _console = Console()
-
-ANSI_BAR = "\033[36m│\033[0m"
-SHORT_THRESHOLD = 3
 
 
 def _format_stats(usage, timer):
@@ -31,29 +28,6 @@ def _format_stats(usage, timer):
         total = usage.get("total_tokens", 0)
         parts.append(f"输入 {prompt} + 输出 {completion} = {total} tokens")
     return " | ".join(parts) if parts else None
-
-
-def _render_md_lines(text):
-    md = Markdown(text)
-    with _console.capture() as capture:
-        _console.print(md, width=_console.width - 6)
-    return capture.get().rstrip("\n").split("\n")
-
-
-def _print_short(lines):
-    sys.stdout.write("\n")
-    for line in lines:
-        sys.stdout.write(f"  {line}\n")
-    sys.stdout.write("\n")
-    sys.stdout.flush()
-
-
-def _print_long(lines):
-    sys.stdout.write(f"  {ANSI_BAR}\n")
-    for line in lines:
-        sys.stdout.write(f"  {ANSI_BAR} {line}\n")
-    sys.stdout.write(f"  {ANSI_BAR}\n\n")
-    sys.stdout.flush()
 
 
 async def render(event_stream, spinner=None, taskboard=None):
@@ -116,11 +90,7 @@ async def render(event_stream, spinner=None, taskboard=None):
                 spinner.stop(final_message=stats)
 
                 if reply:
-                    md_lines = _render_md_lines(reply)
-                    if len(md_lines) <= SHORT_THRESHOLD:
-                        _print_short(md_lines)
-                    else:
-                        _print_long(md_lines)
+                    print_markdown(reply)
                 else:
                     sys.stdout.write("\n")
                     sys.stdout.flush()

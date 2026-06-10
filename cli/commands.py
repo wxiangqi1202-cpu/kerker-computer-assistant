@@ -310,6 +310,31 @@ def cmd_exit(args, ctx):
     ctx["should_exit"] = True
 
 
+@command("/theme", "切换渲染主题")
+def cmd_theme(args, ctx):
+    from display.theme import get_theme, set_theme, get_theme_names
+    names = get_theme_names()
+    current = get_theme().get("name", "minimal")
+
+    if args.strip():
+        name = args.strip()
+        if set_theme(name):
+            _console.print(f"  [green]✓ 主题: {name}[/green]")
+        else:
+            _console.print(f"  [red]未知主题: {name}  可选: {', '.join(names)}[/red]")
+        return
+
+    items = [
+        {"label": name, "hint": "✓" if name == current else ""}
+        for name in names
+    ]
+    current_idx = names.index(current) if current in names else 0
+    idx = pick(items, title="↑↓ 选择主题, Enter 确认, ESC 取消", current_idx=current_idx)
+    if idx is not None:
+        set_theme(names[idx])
+        _console.print(f"  [green]✓ 主题: {names[idx]}[/green]")
+
+
 @command("/fast", "极速模式 (flash+关思考)")
 def cmd_fast(args, ctx):
     config.apply_preset("fast")
