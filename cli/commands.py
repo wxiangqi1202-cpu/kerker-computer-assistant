@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.table import Table
 
 from core import config
-from core.config import save_user_config
+
 from core.async_client import create_client
 from core import history
 from core.history import clean_for_api
@@ -92,7 +92,7 @@ def _apply_model(model_name, ctx):
     config.MODEL = model_name
     config.BASE_URL = config.MODELS[model_name]["base_url"]
     ctx["api_client"] = create_client()
-    save_user_config()
+    config.save_user_config()
 
 
 @command("/role", "切换/新建角色")
@@ -131,7 +131,7 @@ def _apply_role(role_name, ctx):
     config.SYSTEM_PROMPTS = config.ROLES[role_name]
     non_system = [m for m in ctx["messages"] if m["role"] != "system"]
     ctx["messages"] = clean_for_api(build_system_messages() + non_system)
-    save_user_config()
+    config.save_user_config()
 
 
 def _create_role(ctx):
@@ -341,7 +341,7 @@ def cmd_config(args, ctx):
                 try:
                     parsed = value.lower() in ("true", "1", "yes", "on") if type_fn is bool else type_fn(value)
                     setattr(config, attr, parsed)
-                    save_user_config()
+                    config.save_user_config()
                     _console.print(f"  [green]✓ {key} = {parsed}[/green]")
                 except Exception as err:
                     _console.print(f"  [red]值无效: {err}[/red]")
@@ -370,7 +370,7 @@ def cmd_config(args, ctx):
             return
         parsed = new_val.lower() in ("true", "1", "yes", "on") if type_fn is bool else type_fn(new_val)
         setattr(config, attr, parsed)
-        save_user_config()
+        config.save_user_config()
         _console.print(f"  [green]✓ {key} = {parsed}[/green]")
     except (EOFError, KeyboardInterrupt):
         _console.print("\n  [dim]已取消[/dim]")

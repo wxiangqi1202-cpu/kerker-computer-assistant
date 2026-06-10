@@ -11,7 +11,6 @@ from rich.text import Text
 from rich.columns import Columns
 
 from core import config
-from core.config import save_user_config
 from core.async_client import create_client, send
 from core.history import ensure_dirs
 from core import history
@@ -26,6 +25,12 @@ import agents  # noqa: F401  触发子智能体加载
 _console = Console()
 
 VERSION = "0.2.0"
+
+try:
+    import importlib.metadata
+    VERSION = importlib.metadata.version("kerker")
+except Exception:
+    pass
 
 
 def _show_welcome():
@@ -127,7 +132,7 @@ async def _async_main():
             user_input = (await session.prompt_async("  › ")).strip()
         except (EOFError, KeyboardInterrupt):
             _autosave(messages)
-            save_user_config()
+            config.save_user_config()
             _console.print("\n  [dim]再见！[/dim]")
             break
 
@@ -147,7 +152,7 @@ async def _async_main():
             if dispatch(user_input, ctx):
                 if ctx["should_exit"]:
                     _autosave(messages)
-                    save_user_config()
+                    config.save_user_config()
                     _console.print("  [dim]再见！[/dim]")
                     break
                 messages = ctx["messages"]

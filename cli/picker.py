@@ -1,23 +1,51 @@
 """
 通用键盘选择器 —— 上下箭头选择，Enter 确认，ESC取消
 参考 fzf / gh cli 风格，简洁高亮。
+非 Unix 系统退化为数字输入选择。
 """
 
 import sys
-import tty
-import termios
 import os
-import select
 
 
-def pick(items, title="", current_idx=0):
-    """
-    显示可选列表，用户上下键选择，Enter 确认。
-    items: [{"label": "显示文本", "hint": "灰色提示(可选)"}, ...]
-    返回选中的 index，取消返回 None。
-    """
-    if not items:
+def _has_unix_terminal():
+    try:
+        import tty, termios, select  # noqa: F401
+        return hasattr(sys.stdin, "fileno") and os.isatty(sys.stdin.fileno())
+    except Exception:
+        return False
+
+
+def _pick_fallback(items, title="", current_idx=0):
+    """非 Unix 终端的退化选择器：数字输入"""
+    if title:
+        print(f"\n  {title}\n")
+    for i, item in enumerate(items):
+        label = item.get("label", "")
+        hint = item.get("hint", "")
+        marker = " *" if i == current_idx else ""
+        suffix = f"  ({hint})" if hint else ""
+        print(f"  [{i + 1}] {label}{suffix}{marker}")
+    try:
+        choice = input(f"\n  输入编号 (1-{len(items)}, 回车取消): ").strip()
+    except (EOFError, KeyboardInterrupt):
         return None
+    if not choice:
+        return None
+    try:
+        idx = int(choice) - 1
+        if 0 <= idx < len(items):
+            return idx
+    except ValueError:
+        pass
+    return None
+
+
+def _pick_unix(items, title="", current_idx=0):
+    """Unix 终端的交互式选择器"""
+    import tty
+    import termios
+    import select
 
     selected = min(current_idx, len(items) - 1)
     fd = sys.stdin.fileno()
@@ -102,3 +130,16 @@ def pick(items, title="", current_idx=0):
         except Exception:
             pass
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+def pick(items, title="", current_idx=0):
+    """
+    显示可选列表，用户上下键选择，Enter 确认。
+    items: [{"label": "显示文本", "hint": "灰色提示(可选)"}, ...]
+    返回选中的 index，取消返回 None。
+    """
+    if not items:
+        return None
+    if _has_unix_terminal():
+        return _pick_unix(items, title, current_idx)
+    return _pick_fallback(items, title, current_idx)

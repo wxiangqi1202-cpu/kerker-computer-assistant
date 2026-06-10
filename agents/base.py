@@ -22,13 +22,15 @@ class SubAgent:
 
     def __init__(self):
         self._client = None
+        self._client_base_url = None
 
     def _get_client(self):
-        if self._client is None:
+        model = self.model or config.MODEL
+        base_url = config.MODELS.get(model, {}).get("base_url", config.BASE_URL)
+        if self._client is None or self._client_base_url != base_url:
             api_key = load_api_key()
-            model = self.model or config.MODEL
-            base_url = config.MODELS.get(model, {}).get("base_url", config.BASE_URL)
             self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+            self._client_base_url = base_url
         return self._client
 
     def _get_tools(self):

@@ -3,6 +3,7 @@
 """
 
 import os
+import asyncio
 from openai import AsyncOpenAI
 from core import config
 from core.credentials import load_api_key
@@ -83,43 +84,32 @@ async def send(client, messages):
         messages.append(result["assistant_msg"])
 
         tool_calls = result["tool_calls"]
-        agent_calls = [tc for tc in tool_calls if tc["name"].startswith("agent_")]
-        other_calls = [tc for tc in tool_calls if not tc["name"].startswith("agent_")]
 
         for tc in tool_calls:
             yield {"type": "tool_exec", "name": tc["name"], "args": tc["args"]}
 
-        if len(agent_calls) > 1:
-            import asyncio
-            async def _run_one(tc):
-                return tc, await skills.async_call(tc["name"], tc["args"])
-            tasks = [_run_one(tc) for tc in agent_calls]
-            results = await asyncio.gather(*tasks)
-            for tc, tool_result in results:
-                yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": tool_result,
-                })
-        else:
-            for tc in agent_calls:
-                tool_result = await skills.async_call(tc["name"], tc["args"])
-                yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": tool_result,
-                })
+        agent_calls = [tc for tc in tool_calls if tc["name"].startswith("agent_")]
+        other_calls = [tc for tc in tool_calls if not tc["name"].startswith("agent_")]
 
-        for tc in other_calls:
+        async def _exec_tool(tc):
+            tool_result = await skills.async_call(tc["name"], tc["args"])
+            return tc, tool_result
+
+        calls_to_run = []
+        if len(agent_calls) > 1:
+            results_list = await asyncio.gather(*[_exec_tool(tc) for tc in agent_calls])
+            for tc, tool_result in results_list:
+                yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
+                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})
+        else:
+            calls_to_run.extend(agent_calls)
+
+        calls_to_run.extend(other_calls)
+
+        for tc in calls_to_run:
             tool_result = await skills.async_call(tc["name"], tc["args"])
             yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "content": tool_result,
-            })
+            messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})
 
 
 async def _handle_stream(response):

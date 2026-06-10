@@ -9,7 +9,6 @@ from rich.panel import Panel
 from rich.text import Text
 
 from core import config
-from core.config import save_user_config
 from core.credentials import save_api_key, has_api_key
 from cli.picker import pick
 
@@ -107,7 +106,7 @@ def run_setup():
         if info["base_url"] != config.BASE_URL:
             config.MODELS[mid]["base_url"] = config.BASE_URL
 
-    save_user_config()
+    config.save_user_config()
 
     _console.print()
     _console.print("  [green]✓ 配置完成！[/green]")

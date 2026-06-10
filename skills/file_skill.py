@@ -3,6 +3,27 @@
 import os
 from skills import register
 
+_SENSITIVE_PATHS = [
+    os.path.expanduser("~/.ssh"),
+    os.path.expanduser("~/.gnupg"),
+    os.path.expanduser("~/.aws"),
+    os.path.expanduser("~/.kerker/credentials"),
+    "/etc/shadow",
+    "/etc/passwd",
+]
+
+_SENSITIVE_NAMES = {".zshrc", ".bashrc", ".bash_profile", ".profile", ".zprofile", ".env"}
+
+
+def _is_sensitive(path):
+    path = os.path.abspath(os.path.expanduser(path))
+    for sp in _SENSITIVE_PATHS:
+        if path == sp or path.startswith(sp + os.sep):
+            return True
+    if os.path.basename(path) in _SENSITIVE_NAMES:
+        return True
+    return False
+
 
 def read_file(path):
     path = os.path.expanduser(path)
@@ -20,6 +41,8 @@ def read_file(path):
 
 def write_file(path, content):
     path = os.path.expanduser(path)
+    if _is_sensitive(path):
+        return f"安全限制: 不允许写入敏感路径 {path}"
     try:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:

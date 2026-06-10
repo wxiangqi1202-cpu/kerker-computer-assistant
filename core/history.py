@@ -69,17 +69,20 @@ def clean_for_api(messages):
             if tid and tid in pending_tool_ids:
                 cleaned.append(msg)
                 pending_tool_ids.discard(tid)
-            # 跳过孤立的 tool 消息
         else:
             if pending_tool_ids:
-                # 上一个 tool_call 链不完整，回退 assistant 消息
+                back = []
+                while cleaned and cleaned[-1].get("role") == "tool":
+                    back.append(cleaned.pop())
                 if cleaned and cleaned[-1].get("tool_calls"):
                     cleaned.pop()
                 pending_tool_ids.clear()
             cleaned.append(msg)
 
-    # 末尾如果有未闭合的 tool 链也清掉
-    if pending_tool_ids and cleaned and cleaned[-1].get("tool_calls"):
-        cleaned.pop()
+    if pending_tool_ids:
+        while cleaned and cleaned[-1].get("role") == "tool":
+            cleaned.pop()
+        if cleaned and cleaned[-1].get("tool_calls"):
+            cleaned.pop()
 
     return cleaned

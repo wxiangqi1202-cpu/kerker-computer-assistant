@@ -60,12 +60,7 @@ def match_plan_step(task_text):
     """当 agent 被调度时，匹配 planner 步骤并标记 running。返回步骤名。"""
     if not _plan_steps or not _active_taskboard:
         return None
-    with _active_taskboard._lock:
-        for t in _active_taskboard._tasks:
-            if t["status"] == "pending":
-                t["status"] = "running"
-                return t["name"]
-    return None
+    return _active_taskboard.advance_first_pending()
 
 
 def complete_plan_step(step_name):

@@ -45,6 +45,15 @@ class TaskBoard:
             self._tasks.clear()
             self._visible = False
 
+    def advance_first_pending(self):
+        """将第一个 pending 任务标记为 running，返回其名称；无则返回 None"""
+        with self._lock:
+            for task in self._tasks:
+                if task["status"] == "pending":
+                    task["status"] = "running"
+                    return task["name"]
+        return None
+
     def get_lines(self):
         """返回要渲染的行列表，由 spinner 调用"""
         with self._lock:

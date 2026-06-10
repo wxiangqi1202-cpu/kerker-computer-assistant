@@ -67,9 +67,10 @@ async def render(event_stream, spinner=None, taskboard=None):
     assistant_msg = None
     receiving_text = False
 
-    cancel_task = asyncio.ensure_future(_watch_interrupt(spinner))
+    cancel_task = None
 
-    try:
+    async def _consume_stream():
+        nonlocal reply, assistant_msg, receiving_text
         async for event in event_stream:
             if spinner.interrupted:
                 break
@@ -124,8 +125,14 @@ async def render(event_stream, spinner=None, taskboard=None):
                     sys.stdout.write("\n")
                     sys.stdout.flush()
 
+    try:
+        consume_task = asyncio.ensure_future(_consume_stream())
+        cancel_task = asyncio.ensure_future(_watch_interrupt(spinner, consume_task))
+        await consume_task
+
     finally:
-        cancel_task.cancel()
+        if cancel_task:
+            cancel_task.cancel()
         import agents
         agents.clear_plan()
         if spinner.interrupted:
@@ -142,14 +149,12 @@ async def render(event_stream, spinner=None, taskboard=None):
     return reply, assistant_msg
 
 
-async def _watch_interrupt(spinner):
+async def _watch_interrupt(spinner, target_task):
     try:
         while True:
             await asyncio.sleep(0.1)
             if spinner.interrupted:
-                for task in asyncio.all_tasks():
-                    if task is not asyncio.current_task():
-                        task.cancel()
+                target_task.cancel()
                 break
     except asyncio.CancelledError:
         pass
