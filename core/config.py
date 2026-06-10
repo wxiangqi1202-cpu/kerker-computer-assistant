@@ -38,6 +38,17 @@ class Config:
         "例如：问时间→调 get_current_time，问天气→调 get_weather，问文件→调 read_file。"
     )
 
+    EXPLORE_DIRECTIVE = (
+        "重要行为准则：当你不确定如何完成用户的请求时，绝对不要直接说'做不到'或'没有这个功能'。"
+        "你应该主动使用 run_shell 工具探索解决方案：\n"
+        "1. 用 which/where/command -v 检查系统上是否有相关命令\n"
+        "2. 用 ls/find 查看是否有相关配置文件或工具\n"
+        "3. 用 --help 查看已安装工具的用法\n"
+        "4. 用 pip3 list/npm list -g 检查已安装的包\n"
+        "5. 尝试执行命令看看结果\n"
+        "只有在尝试探索后确认没有可行方案时，才告知用户并给出替代建议。"
+    )
+
     _BUILTIN_ROLES = None
     _PERSIST_KEYS = ("MODEL", "CURRENT_ROLE", "STREAM", "REASONING_EFFORT",
                      "ENABLE_THINKING", "MAX_CONTEXT_MESSAGES", "AUTO_ROUTE")
@@ -64,6 +75,7 @@ class Config:
                 "回答使用中文。",
                 "要更具备幽默感，但要注意场合，不要过于随意。",
                 self.TOOL_DIRECTIVE,
+                self.EXPLORE_DIRECTIVE,
                 self.AGENT_DIRECTIVE,
             ],
             "代码助手": [
@@ -71,6 +83,7 @@ class Config:
                 "回答时优先给出代码示例，辅以简洁的中文解释。",
                 "如果用户的代码有 bug，先指出问题再给修复方案。",
                 self.TOOL_DIRECTIVE,
+                self.EXPLORE_DIRECTIVE,
                 self.AGENT_DIRECTIVE,
             ],
             "翻译官": [
@@ -92,6 +105,7 @@ class Config:
                 "回答使用中文，给出可直接使用的代码示例。",
                 "遇到复杂任务时，会调度 ascend_dev 和 ascend_debug 子智能体协助。",
                 self.TOOL_DIRECTIVE,
+                self.EXPLORE_DIRECTIVE,
                 self.AGENT_DIRECTIVE,
             ],
         }

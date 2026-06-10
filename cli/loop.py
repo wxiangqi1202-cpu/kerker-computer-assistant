@@ -147,6 +147,12 @@ async def _async_main():
     agents.set_spinner(spinner)
     agents.set_taskboard(taskboard)
     messages = build_system_messages()
+
+    from core.env_probe import format_env_prompt
+    env_prompt = format_env_prompt()
+    if env_prompt:
+        messages.append({"role": "system", "content": env_prompt})
+
     _show_welcome()
 
     ctx = {
