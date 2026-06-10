@@ -55,22 +55,24 @@ def _extract_usage(usage_obj):
 
 def _try_auto_route(messages):
     """
-    检查最后一条 user 消息，判断是否需要自动注入路由指令。
-    返回需要追加的消息列表（可能为空）。
+    检查最后一条 user 消息 + 对话上下文，判断是否需要自动注入路由指令。
+    返回 (RouteDecision, 需要追加的消息列表) 或 (None, None)。
     """
     from agents.router import route, RouteDecision
     from agents import get_all_agents
+    from agents.context import get_context
 
     user_msgs = [m for m in messages if m.get("role") == "user"]
     if not user_msgs:
-        return None
+        return None, None
 
     last_user = user_msgs[-1].get("content", "")
     available = set(get_all_agents().keys())
-    decision = route(last_user, available)
+    ctx = get_context()
+    decision = route(last_user, available, context=ctx)
 
     if decision.action == RouteDecision.PLAN:
-        return [{
+        return decision, [{
             "role": "system",
             "content": (
                 "[自动路由] 检测到复杂任务，请先调用 agent_planner 进行任务规划，"
@@ -81,7 +83,7 @@ def _try_auto_route(messages):
         }]
 
     if decision.action == RouteDecision.SINGLE_AGENT and decision.agent_name:
-        return [{
+        return decision, [{
             "role": "system",
             "content": (
                 f"[自动路由] 检测到该任务适合由 {decision.agent_name} 处理，"
@@ -89,7 +91,7 @@ def _try_auto_route(messages):
             ),
         }]
 
-    return None
+    return decision, None
 
 
 async def send(client, messages):
@@ -99,9 +101,11 @@ async def send(client, messages):
     async generator，yield 事件 dict。
     """
     if config.AUTO_ROUTE:
-        yield_from = _try_auto_route(messages)
-        if yield_from:
-            for msg in yield_from:
+        decision, route_msgs = _try_auto_route(messages)
+        if decision:
+            yield {"type": "route", "decision": decision}
+        if route_msgs:
+            for msg in route_msgs:
                 messages.append(msg)
     while True:
         kwargs = _build_kwargs(messages)

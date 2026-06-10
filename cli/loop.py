@@ -86,14 +86,42 @@ async def _read_multiline(session):
 
 
 def _trim_context(messages):
-    """保持上下文在限制以内，保留 system 消息，确保 tool 链完整"""
+    """
+    智能上下文裁剪：超出限制的旧消息压缩为摘要保留，而不是丢弃。
+    保留 system 消息，确保 tool 链完整。
+    """
     from core.history import clean_for_api
     limit = config.MAX_CONTEXT_MESSAGES
     system_msgs = [m for m in messages if m["role"] == "system"]
     non_system = [m for m in messages if m["role"] != "system"]
-    if len(non_system) > limit:
-        non_system = non_system[-limit:]
-    result = system_msgs + non_system
+
+    if len(non_system) <= limit:
+        return clean_for_api(system_msgs + non_system)
+
+    overflow = non_system[:-limit]
+    kept = non_system[-limit:]
+
+    summary_parts = []
+    for msg in overflow:
+        role = msg.get("role", "")
+        content = msg.get("content", "") or ""
+        if role == "user" and content:
+            line = content.split("\n")[0][:80]
+            summary_parts.append(f"用户: {line}")
+        elif role == "assistant" and content:
+            line = content.split("\n")[0][:80]
+            summary_parts.append(f"助手: {line}")
+
+    if summary_parts:
+        summary_text = (
+            "[以下是更早的对话摘要，供参考]\n"
+            + "\n".join(summary_parts[-8:])
+        )
+        summary_msg = {"role": "system", "content": summary_text}
+        result = system_msgs + [summary_msg] + kept
+    else:
+        result = system_msgs + kept
+
     return clean_for_api(result)
 
 

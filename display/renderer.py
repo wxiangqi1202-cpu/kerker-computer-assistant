@@ -17,6 +17,20 @@ from display.md_render import print_markdown
 
 _console = Console()
 
+_ROUTE_TIPS = {
+    "plan": ["启动任务规划...", "拆解子步骤中..."],
+    "single_agent": ["调度专属智能体..."],
+}
+
+
+def _show_route_hint(decision, spinner):
+    """将路由决策转化为 spinner 提示"""
+    action = decision.action
+    if action == "plan":
+        spinner.update(tips=_ROUTE_TIPS["plan"])
+    elif action == "single_agent" and decision.agent_name:
+        spinner.update(tips=[f"调度 {decision.agent_name}..."])
+
 
 def _format_stats(usage, timer):
     parts = []
@@ -50,6 +64,11 @@ async def render(event_stream, spinner=None, taskboard=None):
                 break
 
             etype = event["type"]
+
+            if etype == "route":
+                decision = event.get("decision")
+                if decision:
+                    _show_route_hint(decision, spinner)
 
             if etype == "thinking":
                 spinner.update(tips=THINKING_TIPS)
@@ -104,7 +123,6 @@ async def render(event_stream, spinner=None, taskboard=None):
         if cancel_task:
             cancel_task.cancel()
         import agents
-        agents.clear_plan()
         if spinner.interrupted:
             if taskboard:
                 taskboard.clear()
@@ -112,6 +130,7 @@ async def render(event_stream, spinner=None, taskboard=None):
             sys.stdout.write(f"\n  \033[2m⏹ 已中断 (ESC)\033[0m\n\n")
             sys.stdout.flush()
         else:
+            agents.clear_plan()
             if taskboard:
                 taskboard.clear()
             spinner.stop()

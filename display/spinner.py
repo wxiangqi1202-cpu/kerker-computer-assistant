@@ -156,7 +156,7 @@ class Spinner:
                 self._sub_lines.pop(k, None)
             subs = [(k, v) for k, (v, _) in self._sub_lines.items()]
 
-        task_lines = self._taskboard.get_lines() if self._taskboard else []
+        task_lines = self._taskboard.get_lines(tick=spin_idx) if self._taskboard else []
         total_lines = 1 + len(subs) + len(task_lines)
 
         elapsed = time.time() - self._start_time

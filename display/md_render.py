@@ -13,7 +13,7 @@ from rich.syntax import Syntax
 
 from display.theme import get_theme, RESET
 
-_console = Console()
+_console = Console(force_terminal=True)
 
 # ── Markdown 块级解析 ─────────────────────────────
 
@@ -243,11 +243,12 @@ def _render_code_block(block, indent, content_width):
     code = block["code"]
     border = t["code_border"]
     lang_style = t["code_lang_style"]
+    code_indent = indent + "  "
 
     if lang != "text":
-        label = f"{indent}{border}{'─' * 2}{RESET} {lang_style}{lang}{RESET}\n"
+        label = f"{indent}{lang_style}{lang}{RESET}\n"
     else:
-        label = f"{indent}{border}{'─' * 24}{RESET}\n"
+        label = ""
 
     try:
         syntax = Syntax(
@@ -256,10 +257,10 @@ def _render_code_block(block, indent, content_width):
             background_color=t.get("code_background", "default"),
             line_numbers=False,
             word_wrap=True,
-            padding=(0, 1),
+            padding=(0, 0),
         )
         with _console.capture() as capture:
-            _console.print(syntax, width=content_width - 4)
+            _console.print(syntax, width=content_width - 6)
         rendered = capture.get().rstrip("\n")
         code_lines = rendered.split("\n")
     except Exception:
@@ -267,8 +268,7 @@ def _render_code_block(block, indent, content_width):
 
     buf = label
     for cl in code_lines:
-        buf += f"{indent}{border}│{RESET} {cl}\n"
-    buf += f"{indent}{border}{'─' * 24}{RESET}\n"
+        buf += f"{code_indent}{cl}\n"
     return buf
 
 
@@ -334,20 +334,21 @@ def _render_table(block, indent):
     border_style = t["table_border"]
     header_style = t["table_header"]
     cell_style = t["table_cell"]
+    sep = t.get("table_sep", "  ")
 
     buf = indent
     for i, h in enumerate(headers):
         styled = _styled(_align_cell(h, col_widths[i], alignments[i]), header_style)
         buf += styled
         if i < col_count - 1:
-            buf += f" {_styled('│', border_style)} "
+            buf += sep
     buf += "\n"
 
     buf += indent
     for i in range(col_count):
         buf += _styled("─" * col_widths[i], border_style)
         if i < col_count - 1:
-            buf += _styled("─┼─", border_style)
+            buf += _styled("─" * len(sep), border_style)
     buf += "\n"
 
     for row in data_rows:
@@ -357,7 +358,7 @@ def _render_table(block, indent):
             styled = _styled(_align_cell(cell_text, col_widths[i], alignments[i]), cell_style)
             buf += styled
             if i < col_count - 1:
-                buf += f" {_styled('│', border_style)} "
+                buf += sep
         buf += "\n"
 
     return buf

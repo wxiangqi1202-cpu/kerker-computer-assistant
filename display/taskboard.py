@@ -1,15 +1,20 @@
 """
 任务面板 —— 实时显示任务规划和执行进度
 与 spinner 共享终端空间，在 spinner 下方显示任务列表。
+running 状态使用呼吸灯效果。
 """
 
 import threading
 
+_BREATH_COLORS = [
+    238, 240, 242, 244, 247, 250, 252, 255,
+    252, 250, 247, 244, 242, 240, 238, 236,
+]
+
 STATUS_ICONS = {
-    "pending": "\033[90m○\033[0m",
-    "running": "\033[36m◎\033[0m",
-    "done": "\033[32m●\033[0m",
-    "error": "\033[31m✗\033[0m",
+    "pending": "·",
+    "done": "✓",
+    "error": "✗",
 }
 
 
@@ -22,7 +27,6 @@ class TaskBoard:
         self._visible = False
 
     def add_or_update(self, name, status):
-        """添加或更新任务。name 已存在则更新状态，否则追加。"""
         with self._lock:
             for task in self._tasks:
                 if task["name"] == name:
@@ -33,7 +37,6 @@ class TaskBoard:
             self._visible = True
 
     def update_task(self, name, status):
-        """更新已存在任务的状态"""
         with self._lock:
             for task in self._tasks:
                 if task["name"] == name:
@@ -46,7 +49,6 @@ class TaskBoard:
             self._visible = False
 
     def advance_first_pending(self):
-        """将第一个 pending 任务标记为 running，返回其名称；无则返回 None"""
         with self._lock:
             for task in self._tasks:
                 if task["status"] == "pending":
@@ -54,17 +56,25 @@ class TaskBoard:
                     return task["name"]
         return None
 
-    def get_lines(self):
-        """返回要渲染的行列表，由 spinner 调用"""
+    def get_lines(self, tick=0):
+        """返回要渲染的行列表，由 spinner 调用。tick 用于驱动呼吸动画。"""
         with self._lock:
             if not self._visible or not self._tasks:
                 return []
             lines = []
             for task in self._tasks:
-                icon = STATUS_ICONS.get(task["status"], STATUS_ICONS["pending"])
+                status = task["status"]
                 name = task["name"]
-                if task["status"] == "running":
-                    lines.append(f"    {icon} \033[97m{name}\033[0m")
+
+                if status == "running":
+                    color = _BREATH_COLORS[tick % len(_BREATH_COLORS)]
+                    lines.append(
+                        f"    \033[38;5;{color}m›\033[0m \033[97m{name}\033[0m"
+                    )
+                elif status == "done":
+                    lines.append(f"    \033[32m✓\033[0m \033[90m{name}\033[0m")
+                elif status == "error":
+                    lines.append(f"    \033[31m✗\033[0m \033[90m{name}\033[0m")
                 else:
-                    lines.append(f"    {icon} \033[90m{name}\033[0m")
+                    lines.append(f"    \033[90m·\033[0m \033[90m{name}\033[0m")
             return lines

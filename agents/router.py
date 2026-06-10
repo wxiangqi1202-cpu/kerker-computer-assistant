@@ -1,6 +1,13 @@
 """
 自动路由层 —— 程序级判定是否需要规划，替代纯 prompt 暗示
-根据用户输入特征决定：直接回答 / 自动注入 planner / 指定单个 agent
+根据用户输入特征 + 对话上下文决定：直接回答 / 自动注入 planner / 指定单个 agent
+
+判定优先级：
+  0. 上下文继承（上轮刚完成规划，短指令继承 plan 模式）
+  1. 简单对话 → DIRECT
+  2. 复杂度评分 ≥ 2 → PLAN
+  3. 专属 Agent 关键词 → SINGLE_AGENT
+  4. 默认 → DIRECT
 """
 
 import re
@@ -12,6 +19,14 @@ _COMPLEX_SIGNALS = [
     re.compile(r"(并且|同时|以及).+(并且|同时|以及|还要)"),
     re.compile(r"(从.+到.+再到)"),
     re.compile(r"(写一个|开发一个|实现一个|搭建一个|构建).{4,}"),
+    re.compile(r"包括.{2,}(和|、|以及|还有|与)"),
+    re.compile(r"(、).{1,6}(、)"),
+    re.compile(r"(先|再|接下来|之后|完成后)"),
+]
+
+_INQUIRY_PATTERNS = [
+    re.compile(r"(介绍|解释|说明|描述|讲解|讲一下|说一下|是什么|什么是|怎么理解|有哪些|区别)"),
+    re.compile(r"^(什么|哪些|怎么|如何|为什么|能不能).{0,6}(步骤|流程|方案|阶段|区别|概念|原理)"),
 ]
 
 _DIRECT_AGENT_KEYWORDS = {
@@ -35,9 +50,13 @@ _SIMPLE_PATTERNS = [
     re.compile(r"^(几点|时间|天气|日期)"),
 ]
 
+_CONTINUE_PATTERNS = [
+    re.compile(r"^(好的|ok|开始|继续|执行|go|来吧|干吧|开搞|走起|开始吧|那就).{0,10}$"),
+    re.compile(r"^(按照|按|根据).{0,8}(方案|规划|计划|步骤|执行|做|来)"),
+]
+
 
 class RouteDecision:
-    """路由决策结果"""
     DIRECT = "direct"
     PLAN = "plan"
     SINGLE_AGENT = "single_agent"
@@ -53,15 +72,54 @@ class RouteDecision:
         return f"Route({self.action}, {self.reason})"
 
 
-def route(user_input, available_agents=None):
+def _calc_complexity(text):
+    score = 0
+    for pat in _COMPLEX_SIGNALS:
+        if pat.search(text):
+            score += 1
+    if len(text) > 80:
+        score += 1
+    if text.count("，") + text.count(",") >= 3:
+        score += 1
+
+    for pat in _INQUIRY_PATTERNS:
+        if pat.search(text):
+            score -= 2
+            break
+
+    return max(score, 0)
+
+
+def _check_continue(text):
+    """检测是否为继续/确认类指令"""
+    for pat in _CONTINUE_PATTERNS:
+        if pat.search(text.strip()):
+            return True
+    return False
+
+
+def route(user_input, available_agents=None, context=None):
     """
-    根据用户输入决定路由策略。
-    返回 RouteDecision:
-      - DIRECT: 主模型直接回答，不注入规划
-      - PLAN: 自动先调用 planner
-      - SINGLE_AGENT: 直接调用指定 agent
+    判定优先级: 上下文继承 → 简单对话 → 复杂任务 → agent关键词 → 默认
+    context: AgentContext 实例，用于感知上一轮状态
     """
     text = user_input.strip()
+
+    if context and context.has_plan and _check_continue(text):
+        return RouteDecision(RouteDecision.PLAN, reason="继承上轮规划")
+
+    if context and context.has_plan:
+        pending = [s for s in context.plan_steps if s.status == "pending"]
+        if pending:
+            return RouteDecision(RouteDecision.PLAN, reason=f"上轮规划有 {len(pending)} 步未完成")
+
+    for pat in _SIMPLE_PATTERNS:
+        if pat.search(text):
+            return RouteDecision(RouteDecision.DIRECT, reason="简单对话")
+
+    complexity = _calc_complexity(text)
+    if complexity >= 2:
+        return RouteDecision(RouteDecision.PLAN, reason=f"复杂度信号 {complexity}")
 
     for agent_name, patterns in _DIRECT_AGENT_KEYWORDS.items():
         if available_agents and agent_name not in available_agents:
@@ -73,21 +131,5 @@ def route(user_input, available_agents=None):
                     agent_name=agent_name,
                     reason=f"关键词匹配 {agent_name}",
                 )
-
-    for pat in _SIMPLE_PATTERNS:
-        if pat.search(text):
-            return RouteDecision(RouteDecision.DIRECT, reason="简单对话")
-
-    complexity = 0
-    for pat in _COMPLEX_SIGNALS:
-        if pat.search(text):
-            complexity += 1
-    if len(text) > 80:
-        complexity += 1
-    if text.count("，") + text.count(",") >= 3:
-        complexity += 1
-
-    if complexity >= 2:
-        return RouteDecision(RouteDecision.PLAN, reason=f"复杂度信号 {complexity}")
 
     return RouteDecision(RouteDecision.DIRECT, reason="默认直接回答")

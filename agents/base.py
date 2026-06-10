@@ -76,7 +76,7 @@ class SubAgent:
         return last_error or "子智能体执行失败"
 
     async def _execute(self, task, on_status=None):
-        """实际执行逻辑（单次尝试）"""
+        """实际执行逻辑（单次尝试），支持流式进度回调"""
         client = self._get_client()
         model = self.model or config.MODEL
 
@@ -86,13 +86,12 @@ class SubAgent:
         ]
 
         tools = self._get_tools()
-        total_tokens = 0
 
         for turn in range(self.max_turns):
             kwargs = dict(
                 model=model,
                 messages=messages,
-                stream=False,
+                stream=True,
             )
             if tools:
                 kwargs["tools"] = tools
@@ -101,43 +100,74 @@ class SubAgent:
                 kwargs["reasoning_effort"] = "low"
 
             if on_status:
-                on_status(f"子智能体 [{self.name}] 第 {turn + 1} 轮推理...")
+                on_status(f"[{self.name}] 第 {turn + 1} 轮推理...")
 
             response = await client.chat.completions.create(**kwargs)
-            msg = response.choices[0].message
 
-            usage = getattr(response, "usage", None)
-            if usage:
-                total_tokens += getattr(usage, "total_tokens", 0) or 0
+            content = ""
+            reasoning = ""
+            tool_calls_data = {}
+            preview_len = 0
 
-            reasoning = getattr(msg, "reasoning_content", None)
+            async for chunk in response:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
 
-            if not msg.tool_calls:
-                return msg.content or ""
+                rc = getattr(delta, "reasoning_content", None)
+                if rc:
+                    reasoning += rc
+
+                if delta.content:
+                    content += delta.content
+                    if on_status and len(content) - preview_len >= 20:
+                        snippet = content[-40:].replace("\n", " ").strip()
+                        on_status(f"[{self.name}] ...{snippet}")
+                        preview_len = len(content)
+
+                tc_list = getattr(delta, "tool_calls", None)
+                if tc_list:
+                    for tc in tc_list:
+                        idx = tc.index
+                        if idx not in tool_calls_data:
+                            tool_calls_data[idx] = {"id": "", "name": "", "args": ""}
+                        if tc.id:
+                            tool_calls_data[idx]["id"] = tc.id
+                        func = getattr(tc, "function", None)
+                        if func:
+                            if func.name:
+                                tool_calls_data[idx]["name"] = func.name
+                            if func.arguments:
+                                tool_calls_data[idx]["args"] += func.arguments
+
+            parsed_calls = list(tool_calls_data.values()) if tool_calls_data else []
+
+            if not parsed_calls:
+                return content or ""
 
             assistant_msg = {
                 "role": "assistant",
-                "content": msg.content or None,
+                "content": content or None,
                 "tool_calls": [
                     {
-                        "id": tc.id,
+                        "id": tc["id"],
                         "type": "function",
-                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                        "function": {"name": tc["name"], "arguments": tc["args"]},
                     }
-                    for tc in msg.tool_calls
+                    for tc in parsed_calls
                 ],
             }
             if reasoning:
                 assistant_msg["reasoning_content"] = reasoning
             messages.append(assistant_msg)
 
-            for tc in msg.tool_calls:
+            for tc in parsed_calls:
                 if on_status:
-                    on_status(f"子智能体 [{self.name}] 调用 {tc.function.name}")
-                result = await skills_module.async_call(tc.function.name, tc.function.arguments)
+                    on_status(f"[{self.name}] 调用 {tc['name']}")
+                result = await skills_module.async_call(tc["name"], tc["args"])
                 messages.append({
                     "role": "tool",
-                    "tool_call_id": tc.id,
+                    "tool_call_id": tc["id"],
                     "content": result,
                 })
 

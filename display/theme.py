@@ -33,12 +33,12 @@ BUILTIN_THEMES = {
         "inline_code": _c("38;5;180"),
         "link": _c("4;38;5;75"),
 
-        "bullet_l0": ("▸", _c("38;5;75")),
-        "bullet_l1": ("▹", _c("38;5;242")),
-        "bullet_l2": ("·", _c("38;5;240")),
+        "bullet_l0": ("-", _c("38;5;75")),
+        "bullet_l1": ("-", _c("38;5;242")),
+        "bullet_l2": ("-", _c("38;5;240")),
         "ol_num": _c("38;5;75"),
 
-        "quote_bar": ("│", _c("38;5;240")),
+        "quote_bar": ("▍", _c("38;5;240")),
         "quote_text": _c("3;38;5;250"),
 
         "hr_char": "─",
@@ -53,6 +53,7 @@ BUILTIN_THEMES = {
         "table_header": _c("1;38;5;75"),
         "table_cell": _c("38;5;252"),
         "table_border": _c("38;5;238"),
+        "table_sep": "  ",
         "table_pad": 2,
 
         "paragraph": "",
@@ -76,12 +77,12 @@ BUILTIN_THEMES = {
         "inline_code": _c("38;5;216"),
         "link": _c("4;38;5;180"),
 
-        "bullet_l0": ("▸", _c("38;5;216")),
-        "bullet_l1": ("▹", _c("38;5;242")),
-        "bullet_l2": ("·", _c("38;5;240")),
+        "bullet_l0": ("-", _c("38;5;216")),
+        "bullet_l1": ("-", _c("38;5;242")),
+        "bullet_l2": ("-", _c("38;5;240")),
         "ol_num": _c("38;5;216"),
 
-        "quote_bar": ("│", _c("38;5;240")),
+        "quote_bar": ("▍", _c("38;5;240")),
         "quote_text": _c("3;38;5;250"),
 
         "hr_char": "─",
@@ -96,6 +97,7 @@ BUILTIN_THEMES = {
         "table_header": _c("1;38;5;216"),
         "table_cell": _c("38;5;252"),
         "table_border": _c("38;5;238"),
+        "table_sep": "  ",
         "table_pad": 2,
 
         "paragraph": "",
@@ -134,10 +136,12 @@ BUILTIN_THEMES = {
         "code_lang_style": _c("2"),
         "code_border": _c("2"),
         "code_theme": "native",
+        "code_background": "default",
 
         "table_header": _c("1"),
         "table_cell": "",
         "table_border": _c("2"),
+        "table_sep": "  ",
         "table_pad": 2,
 
         "paragraph": "",
