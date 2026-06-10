@@ -99,15 +99,13 @@ class SubAgent:
                 kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
                 kwargs["reasoning_effort"] = "low"
 
-            if on_status:
-                on_status(f"[{self.name}] 第 {turn + 1} 轮推理...")
-
             response = await client.chat.completions.create(**kwargs)
 
             content = ""
             reasoning = ""
             tool_calls_data = {}
             preview_len = 0
+            got_content = False
 
             async for chunk in response:
                 if not chunk.choices:
@@ -120,6 +118,7 @@ class SubAgent:
 
                 if delta.content:
                     content += delta.content
+                    got_content = True
                     if on_status and len(content) - preview_len >= 20:
                         snippet = content[-40:].replace("\n", " ").strip()
                         on_status(f"[{self.name}] ...{snippet}")
