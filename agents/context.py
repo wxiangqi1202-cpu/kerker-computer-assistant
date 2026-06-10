@@ -58,15 +58,19 @@ class AgentContext:
         """
         从 planner 返回的结构化数据设置规划。
         steps: [{"step": "...", "agent": "..."}, ...]
+        内部再做一次去重保底。
         """
         with self._lock:
-            self._plan_steps = [
-                PlanStep(
-                    step=s.get("step", ""),
-                    agent=s.get("agent", ""),
+            self._plan_steps = []
+            for s in steps:
+                name = s.get("step", "").strip()
+                if not name:
+                    continue
+                if any(existing.step == name for existing in self._plan_steps):
+                    continue
+                self._plan_steps.append(
+                    PlanStep(step=name, agent=s.get("agent", ""))
                 )
-                for s in steps if s.get("step")
-            ]
 
     def get_step_names(self):
         with self._lock:

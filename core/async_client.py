@@ -94,11 +94,52 @@ def _try_auto_route(messages):
     return decision, None
 
 
+def _advance_next_step():
+    """主模型直接调用基础 skill 时，推进下一个 pending 步骤为 running"""
+    from agents.context import get_context
+    from agents import _sync_taskboard
+    ctx = get_context()
+    if not ctx.has_plan:
+        return
+    step = ctx.advance_step()
+    if step:
+        _sync_taskboard()
+
+
+def _complete_current_step():
+    """基础 skill 执行完毕后，将当前 running 步骤标记为 done"""
+    from agents.context import get_context
+    from agents import _sync_taskboard
+    ctx = get_context()
+    if not ctx.has_plan:
+        return
+    for s in ctx.plan_steps:
+        if s.status == "running":
+            ctx.complete_step(s.step, summary="已完成")
+            _sync_taskboard()
+            return
+
+
+def _complete_remaining_steps():
+    """主模型最终输出文本前，将所有剩余 pending/running 步骤标记为 done"""
+    from agents.context import get_context
+    from agents import _sync_taskboard
+    ctx = get_context()
+    if not ctx.has_plan:
+        return
+    changed = False
+    for s in ctx.plan_steps:
+        if s.status in ("pending", "running"):
+            ctx.complete_step(s.step, summary="已完成")
+            changed = True
+    if changed:
+        _sync_taskboard()
+
+
 async def send(client, messages):
     """
     异步发送消息并自动处理工具调用循环。
-    支持自动路由：对复杂任务自动注入 planner 调用。
-    async generator，yield 事件 dict。
+    支持自动路由 + 自动推进任务板步骤。
     """
     if config.AUTO_ROUTE:
         decision, route_msgs = _try_auto_route(messages)
@@ -128,6 +169,7 @@ async def send(client, messages):
                     yield event
 
         if not result or not result["tool_calls"]:
+            _complete_remaining_steps()
             break
 
         messages.append(result["assistant_msg"])
@@ -145,10 +187,16 @@ async def send(client, messages):
             yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})
 
+        if other_calls:
+            _advance_next_step()
+
         for tc in other_calls:
             tool_result = await skills.async_call(tc["name"], tc["args"])
             yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})
+
+        if other_calls:
+            _complete_current_step()
 
 
 async def _handle_stream(response):

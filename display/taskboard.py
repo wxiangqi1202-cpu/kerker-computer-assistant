@@ -48,6 +48,18 @@ class TaskBoard:
             self._tasks.clear()
             self._visible = False
 
+    def replace_all(self, items):
+        """用 (name, status) 列表完整替换 taskboard 内容，内部去重"""
+        with self._lock:
+            self._tasks = []
+            seen = set()
+            for name, status in items:
+                if name in seen:
+                    continue
+                seen.add(name)
+                self._tasks.append({"name": name, "status": status})
+            self._visible = bool(self._tasks)
+
     def advance_first_pending(self):
         with self._lock:
             for task in self._tasks:

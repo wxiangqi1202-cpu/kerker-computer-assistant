@@ -19,6 +19,7 @@ from agents.context import get_context, reset_context
 _registry = {}
 _active_spinner = None
 _active_taskboard = None
+_planner_used = False
 
 
 def set_spinner(spinner):
@@ -46,18 +47,45 @@ def get_all_agents():
     return dict(_registry)
 
 
+def _is_similar(a, b):
+    """判断两个步骤名是否重复（精确 / 包含 / 去标点 / 字符重叠度高）"""
+    if a == b:
+        return True
+    if a in b or b in a:
+        return True
+    strip_chars = " \t.,，。、!！?？~·"
+    sa, sb = a.strip(strip_chars), b.strip(strip_chars)
+    if sa == sb:
+        return True
+    if len(sa) >= 3 and len(sb) >= 3:
+        common = sum(1 for c in sa if c in sb)
+        ratio = common / max(len(sa), len(sb))
+        if ratio >= 0.6:
+            return True
+    return False
+
+
 def _parse_planner_result(text):
-    """从 planner 返回文本中解析 JSON 任务列表（含 agent 绑定）"""
+    """从 planner 返回文本中解析 JSON 任务列表（含 agent 绑定），模糊去重"""
     try:
         start = text.find("{")
         end = text.rfind("}") + 1
         if start >= 0 and end > start:
             data = json.loads(text[start:end])
             tasks = data.get("tasks", [])
-            return [
-                {"step": t.get("step", ""), "agent": t.get("agent", "")}
-                for t in tasks if t.get("step")
-            ]
+            result = []
+            for t in tasks:
+                step = t.get("step", "").strip()
+                if not step:
+                    continue
+                duplicate = False
+                for existing in result:
+                    if _is_similar(step, existing["step"]):
+                        duplicate = True
+                        break
+                if not duplicate:
+                    result.append({"step": step, "agent": t.get("agent", "")})
+            return result
     except Exception:
         pass
     return []
@@ -74,15 +102,12 @@ def _summarize_result(text, max_len=200):
 
 
 def _sync_taskboard():
-    """将 AgentContext 的步骤状态同步到 taskboard 显示"""
+    """将 AgentContext 的步骤状态完整同步到 taskboard（全量替换，非追加）"""
     if not _active_taskboard:
         return
     ctx = get_context()
     items = ctx.to_taskboard_items()
-    if not items:
-        return
-    for name, status in items:
-        _active_taskboard.add_or_update(name, status)
+    _active_taskboard.replace_all(items)
 
 
 def _register_as_skill(agent):
@@ -91,7 +116,11 @@ def _register_as_skill(agent):
             _active_spinner.update_sub(agent.name, [text])
 
     async def _run_agent(task):
+        global _planner_used
         ctx = get_context()
+
+        if agent.name == "planner" and _planner_used:
+            return "规划已完成，请根据现有规划继续执行。"
 
         if _active_spinner:
             from display.spinner import AGENT_TIPS
@@ -103,6 +132,7 @@ def _register_as_skill(agent):
             if _active_taskboard:
                 _active_taskboard.add_or_update("规划中...", "running")
             ctx.set_original_task(task)
+            _planner_used = True
         else:
             matched_step_obj = ctx.advance_step(agent_name=agent.name)
             if matched_step_obj:
@@ -120,8 +150,6 @@ def _register_as_skill(agent):
                 steps = _parse_planner_result(result)
                 if steps:
                     ctx.set_plan(steps)
-                    if _active_taskboard:
-                        _active_taskboard.clear()
                     _sync_taskboard()
                 else:
                     if _active_taskboard:
@@ -169,6 +197,8 @@ def _register_as_skill(agent):
 
 def clear_plan():
     """清除规划状态，每轮对话结束后调用"""
+    global _planner_used
+    _planner_used = False
     reset_context()
 
 

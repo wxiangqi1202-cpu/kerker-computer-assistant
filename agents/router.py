@@ -13,7 +13,6 @@
 import re
 
 _COMPLEX_SIGNALS = [
-    re.compile(r"(帮我|请你|麻烦).{0,8}(分析|对比|调研|设计|规划|评估|总结|整理|梳理)"),
     re.compile(r"(步骤|流程|方案|计划|阶段)"),
     re.compile(r"(首先|然后|接着|最后|第[一二三四五六七]|分别)"),
     re.compile(r"(并且|同时|以及).+(并且|同时|以及|还要)"),
@@ -23,6 +22,10 @@ _COMPLEX_SIGNALS = [
     re.compile(r"(、).{1,6}(、)"),
     re.compile(r"(先|再|接下来|之后|完成后)"),
 ]
+
+_ACTION_WORDS = re.compile(
+    r"(分析|对比|调研|设计|规划|评估|总结|整理|梳理|编写|实现|测试|部署|搭建|优化|重构|审查|开发|撰写|生成|选型|排查)"
+)
 
 _INQUIRY_PATTERNS = [
     re.compile(r"(介绍|解释|说明|描述|讲解|讲一下|说一下|是什么|什么是|怎么理解|有哪些|区别)"),
@@ -45,7 +48,7 @@ _DIRECT_AGENT_KEYWORDS = {
 }
 
 _SIMPLE_PATTERNS = [
-    re.compile(r"^.{0,8}$"),
+    re.compile(r"^.{0,5}$"),
     re.compile(r"^(你好|hi|hello|谢谢|ok|好的|嗯|是的|不是|什么是)"),
     re.compile(r"^(几点|时间|天气|日期)"),
 ]
@@ -77,9 +80,16 @@ def _calc_complexity(text):
     for pat in _COMPLEX_SIGNALS:
         if pat.search(text):
             score += 1
+
+    action_hits = len(set(_ACTION_WORDS.findall(text)))
+    if action_hits >= 3:
+        score += 2
+    elif action_hits >= 2:
+        score += 2
+
     if len(text) > 80:
         score += 1
-    if text.count("，") + text.count(",") >= 3:
+    if text.count("，") + text.count(",") >= 2:
         score += 1
 
     for pat in _INQUIRY_PATTERNS:
