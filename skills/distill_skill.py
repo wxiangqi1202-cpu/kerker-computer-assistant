@@ -1,6 +1,5 @@
 """
-技能：角色蒸馏 —— 通过自然语言描述或真实人物名，自动搜索资料并蒸馏为角色 prompt
-用户在对话中说"帮我创建一个xxx角色"时，主模型调用此技能。
+技能：角色蒸馏 —— 通过自然语言描述或真实人物名，搜索多源资料并深度蒸馏为角色 prompt
 """
 
 import json
@@ -9,75 +8,90 @@ from bs4 import BeautifulSoup
 from skills import register
 
 
+def _fetch_page(url, max_chars=4000):
+    """抓取网页文本"""
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return ""
+        resp.encoding = resp.apparent_encoding
+        soup = BeautifulSoup(resp.text, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+            tag.decompose()
+        text = soup.get_text(separator="\n", strip=True)
+        lines = [line for line in text.splitlines() if line.strip()]
+        content = "\n".join(lines[:200])
+        return content[:max_chars]
+    except Exception:
+        return ""
+
+
 def _search_persona(name):
-    """搜索人物/角色的公开资料，提取性格特征描述"""
-    urls = [
+    """多源搜索人物/角色的公开资料，尽可能收集多维度信息"""
+    sources = [
         f"https://zh.wikipedia.org/wiki/{name}",
         f"https://en.wikipedia.org/wiki/{name}",
         f"https://baike.baidu.com/item/{name}",
+        f"https://zh.wikiquote.org/wiki/{name}",
     ]
-    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
-    collected = []
 
-    for url in urls:
-        try:
-            resp = requests.get(url, headers=headers, timeout=10)
-            if resp.status_code != 200:
-                continue
-            resp.encoding = resp.apparent_encoding
-            soup = BeautifulSoup(resp.text, "html.parser")
-            for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
-                tag.decompose()
-            text = soup.get_text(separator="\n", strip=True)
-            lines = [line for line in text.splitlines() if line.strip()]
-            content = "\n".join(lines[:150])
-            if len(content) > 3000:
-                content = content[:3000]
+    collected = []
+    for url in sources:
+        content = _fetch_page(url, max_chars=3000)
+        if content and len(content) > 100:
             collected.append(content)
-            if len(collected) >= 2:
-                break
-        except Exception:
-            continue
+        if len(collected) >= 3:
+            break
 
     return "\n\n---\n\n".join(collected) if collected else ""
 
 
 _DISTILL_PROMPT = """\
-你是一个角色蒸馏专家。根据以下关于"{name}"的资料，提取这个人/角色的核心特征，生成一组 system prompt 用于让 AI 扮演这个角色。
+你是一个角色蒸馏专家。根据以下关于"{name}"的资料，深度提取核心特征，生成一组 system prompt。
 
 资料：
 {material}
 
-用户的额外描述：
+用户额外描述：
 {description}
 
-请输出严格的 JSON 格式，不要输出其他内容：
-{{"role_name": "角色名称", "prompts": ["prompt1", "prompt2", ...], "greeting": "角色的开场自我介绍(1-2句话)"}}
+请从以下 7 个维度深度提取特征：
+1. 身份定位：职业、头衔、时代背景、成就
+2. 说话风格：语气、常用句式、口头禅、修辞偏好（比喻/反讽/排比/设问等）
+3. 思维方式：分析问题的角度、逻辑风格、是否跳跃性思维
+4. 性格标签：3-5个核心性格词（如：犀利、深刻、悲悯、偏执、极简）
+5. 知识领域：擅长话题、专业背景、常引用的领域
+6. 价值观：核心信念、反对什么、坚持什么
+7. 互动习惯：回答方式（直接/迂回/反问）、是否爱举例、是否用隐喻
+
+输出严格 JSON，不要输出其他内容：
+{{"role_name": "角色名称", "prompts": ["prompt1", "prompt2", ...], "greeting": "角色开场白(1-2句，完全用角色口吻)"}}
 
 要求：
-- prompts 包含 3-6 条指令，涵盖：身份定位、说话风格、知识领域、行为习惯
-- 如果是真实人物，捕捉其标志性的语言风格和思维方式
-- 如果是虚构角色或自定义描述，根据描述创造合理的人设
-- greeting 是角色切换后的第一句话，要符合角色性格
+- prompts 包含 5-8 条具体指令，每条针对一个维度
+- 必须具体到语言细节，禁止泛泛而谈（如"说话有个性"这种无用描述）
+- 好的例子："你说话时喜欢用短句，常以反问收尾，偶尔夹杂文言词汇"
+- greeting 要让人一读就能辨认出是谁，体现最标志性的表达特征
 - 使用中文\
 """
 
 
 def distill_role(name, description=""):
     """
-    角色蒸馏：根据名称搜索资料，提取特征，生成角色 prompt。
+    角色蒸馏：搜索多源资料，提取性格/风格/思维等7维度特征，生成角色prompt。
     name: 角色/人物名称
-    description: 用户对角色的额外描述（可选）
-    返回 JSON 字符串：{"role_name": "...", "prompts": [...], "greeting": "..."}
+    description: 额外描述（可选）
+    返回 JSON 字符串
     """
     material = _search_persona(name)
 
     if not material and not description:
-        material = f"没有找到关于 {name} 的公开资料。请根据名称本身的含义来创造角色。"
+        material = f"没有找到关于 {name} 的公开资料。请根据名称含义和常见认知创造角色。"
 
     prompt = _DISTILL_PROMPT.format(
         name=name,
-        material=material[:4000] if material else "(无搜索结果)",
+        material=material[:6000] if material else "(无搜索结果)",
         description=description or "(无额外描述)",
     )
 
@@ -90,7 +104,7 @@ def distill_role(name, description=""):
         response = client.chat.completions.create(
             model="deepseek-v4-flash",
             messages=[
-                {"role": "system", "content": "你是角色蒸馏专家，只输出 JSON。"},
+                {"role": "system", "content": "你是角色蒸馏专家，只输出 JSON，不要解释。"},
                 {"role": "user", "content": prompt},
             ],
             stream=False,
@@ -101,7 +115,8 @@ def distill_role(name, description=""):
         end = result_text.rfind("}") + 1
         if start >= 0 and end > start:
             data = json.loads(result_text[start:end])
-            return json.dumps(data, ensure_ascii=False, indent=2)
+            if "prompts" in data and len(data.get("prompts", [])) >= 3:
+                return json.dumps(data, ensure_ascii=False, indent=2)
 
         return json.dumps({
             "role_name": name,
@@ -121,19 +136,22 @@ def distill_role(name, description=""):
 register(
     name="distill_role",
     description=(
-        "角色蒸馏：根据人物/角色名称搜索公开资料，提取性格特征和说话风格，"
-        "自动生成角色 system prompt。用于用户说'帮我创建一个xxx角色'或'我想和xxx对话'时调用。"
+        "角色蒸馏：根据人物/角色名称搜索多源资料（维基百科、百度百科、维基语录），"
+        "从7个维度深度提取特征（身份/说话风格/思维方式/性格/知识/价值观/互动习惯），"
+        "生成5-8条具体的角色system prompt。"
+        "适用于用户说'创建xxx角色'、'我想和xxx对话'、'扮演xxx'时调用。"
+        "调用后必须紧接着调用 save_distilled_role 保存结果。"
     ),
     parameters={
         "type": "object",
         "properties": {
             "name": {
                 "type": "string",
-                "description": "角色或人物名称，如'鲁迅'、'乔布斯'、'柯南'",
+                "description": "角色或人物名称，如'鲁迅'、'乔布斯'、'苏格拉底'",
             },
             "description": {
                 "type": "string",
-                "description": "用户对角色的额外描述，如'更幽默一些'、'专注于技术话题'",
+                "description": "用户对角色的额外描述，如'更幽默一些'、'说话犀利'",
             },
         },
         "required": ["name"],
