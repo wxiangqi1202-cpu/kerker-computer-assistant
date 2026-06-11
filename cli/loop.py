@@ -90,10 +90,12 @@ def _trim_context(messages):
 
 
 def _autosave(messages):
-    """退出前自动保存当前对话"""
+    """退出前自动保存当前对话 + 索引情景记忆"""
     non_system = [m for m in messages if m["role"] != "system"]
     if non_system:
-        history.save(messages, "_autosave.json")
+        filepath = history.save(messages, "_autosave.json")
+        from core.memory import get_episodic
+        get_episodic().add_episode(messages, filename="_autosave.json")
 
 
 async def _async_main():
@@ -116,6 +118,14 @@ async def _async_main():
     env_prompt = format_env_prompt()
     if env_prompt:
         messages.append({"role": "system", "content": env_prompt})
+
+    from core.memory import get_semantic, get_episodic
+    sem_prompt = get_semantic().format_for_prompt(limit=8)
+    if sem_prompt:
+        messages.append({"role": "system", "content": sem_prompt})
+    epi_prompt = get_episodic().format_recent_for_prompt(limit=3)
+    if epi_prompt:
+        messages.append({"role": "system", "content": epi_prompt})
 
     show_welcome()
 

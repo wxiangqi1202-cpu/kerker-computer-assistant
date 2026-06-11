@@ -261,33 +261,94 @@ def _delete_role(role_name, ctx):
         _console.print(f"  [green]✓ 已删除: {role_name}[/green]")
 
 
-@command("/resume", "对话管理")
+@command("/resume", "恢复/保存/搜索对话")
 def cmd_resume(args, ctx):
-    actions = [
-        {"label": "恢复历史对话", "hint": ""},
+    arg = args.strip()
+
+    if arg == "save":
+        _do_save(ctx)
+        return
+    if arg == "export":
+        _do_export(ctx)
+        return
+    if arg.startswith("search "):
+        _do_search_history(arg[7:].strip())
+        return
+    if arg:
+        _do_load(arg, ctx)
+        return
+
+    items = [
+        {"label": "恢复上次对话", "hint": "自动保存的对话"},
+        {"label": "浏览历史对话", "hint": ""},
+        {"label": "搜索历史", "hint": "按关键词查找"},
         {"label": "保存当前对话", "hint": ""},
-        {"label": "导出为 Markdown", "hint": ""},
+        {"label": "导出 Markdown", "hint": ""},
     ]
 
-    if args.strip() == "save":
-        _do_save(ctx)
-        return
-    if args.strip() == "export":
-        _do_export(ctx)
-        return
-    if args.strip():
-        _do_load(args.strip(), ctx)
-        return
-
-    idx = pick(actions, title="↑↓ 选择操作, Enter 确认, ESC 取消")
+    idx = pick(items, title="对话管理")
     if idx is None:
         return
+
     if idx == 0:
-        _do_pick_history(ctx)
+        _do_quick_resume(ctx)
     elif idx == 1:
-        _do_save(ctx)
+        _do_pick_history(ctx)
     elif idx == 2:
+        _do_search_prompt()
+    elif idx == 3:
+        _do_save(ctx)
+    elif idx == 4:
         _do_export(ctx)
+
+
+def _do_quick_resume(ctx):
+    """快速恢复上次自动保存的对话"""
+    msgs = history.load("_autosave.json")
+    if not msgs:
+        _console.print("  [dim]没有自动保存的对话[/dim]")
+        return
+    ctx["messages"] = msgs
+    non_system = [m for m in msgs if m["role"] != "system"]
+    user_count = sum(1 for m in non_system if m["role"] == "user")
+    _console.print(f"  [green]✓ 已恢复上次对话 ({user_count} 轮)[/green]")
+
+    recent = [m for m in non_system if m["role"] in ("user", "assistant")][-4:]
+    for msg in recent:
+        content = msg.get("content", "") or ""
+        preview = content.split("\n")[0][:50]
+        tag = "你" if msg["role"] == "user" else "K"
+        _console.print(f"  [dim]  {tag} › {preview}[/dim]")
+    _console.print()
+
+
+def _do_search_prompt():
+    """交互式搜索历史"""
+    try:
+        query = input("  搜索关键词: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        _console.print("\n  [dim]已取消[/dim]")
+        return
+    if not query:
+        return
+    _do_search_history(query)
+
+
+def _do_search_history(query):
+    """按关键词搜索情景记忆"""
+    from core.memory import get_episodic
+    epi = get_episodic()
+    results = epi.search(query, limit=10)
+    if not results:
+        _console.print(f"  [dim]没有找到关于'{query}'的历史对话[/dim]")
+        return
+    _console.print(f"\n  [cyan]搜索: {query}[/cyan]\n")
+    for ep in results:
+        ts = ep.get("timestamp", "")[:16].replace("T", " ")
+        summary = ep.get("summary", "")[:50]
+        rounds = ep.get("rounds", 0)
+        _console.print(f"  [dim]{ts}[/dim]  {summary}  [dim]({rounds}轮)[/dim]")
+    _console.print()
 
 
 def _do_pick_history(ctx):
@@ -369,6 +430,8 @@ def _do_save(ctx):
     if name:
         filename = name if name.endswith(".json") else name + ".json"
     filepath = history.save(ctx["messages"], filename)
+    from core.memory import get_episodic
+    get_episodic().add_episode(ctx["messages"], filename=filename)
     _console.print(f"  [green]✓ 已保存: {filepath}[/green]")
 
 
@@ -404,6 +467,39 @@ def _do_export(ctx):
 def cmd_clear(args, ctx):
     ctx["messages"] = build_system_messages()
     _console.print("  [green]✓ 对话已清空[/green]")
+
+
+@command("/memory", "查看/管理记忆")
+def cmd_memory(args, ctx):
+    from core.memory import get_semantic, get_episodic
+    sem = get_semantic()
+
+    arg = args.strip()
+
+    if arg == "clear":
+        try:
+            confirm = input("  确认清空所有记忆? (y/N): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            _console.print("\n  [dim]已取消[/dim]")
+            return
+        if confirm == "y":
+            sem.clear_all()
+            _console.print("  [green]✓ 记忆已清空[/green]")
+        return
+
+    entries = sem.get_all()
+    if not entries:
+        _console.print("  [dim]还没有记忆。在对话中说'记住xxx'来添加。[/dim]")
+        return
+
+    _console.print(f"\n  [cyan]记忆 ({len(entries)} 条)[/cyan]\n")
+    for e in entries:
+        importance = e.get("importance", 5)
+        source = e.get("source", "auto")
+        marker = "★" if importance >= 8 else "·"
+        src_tag = f" [dim]({source})[/dim]" if source != "auto" else ""
+        _console.print(f"  {marker} {e['content']}{src_tag}")
+    _console.print(f"\n  [dim]使用 /memory clear 清空，或在对话中说'忘掉xxx'删除单条[/dim]\n")
 
 
 @command("/exit", "退出程序")

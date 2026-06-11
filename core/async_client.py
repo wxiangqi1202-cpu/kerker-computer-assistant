@@ -135,7 +135,7 @@ def _sync_system_messages(messages):
     env_msgs = []
     for m in old_system:
         content = m["content"]
-        if content.startswith("[当前系统可用工具]") or content.startswith("[以下是更早"):
+        if any(content.startswith(p) for p in ("[当前系统可用工具]", "[以下是更早", "[用户记忆]", "[近期对话摘要]")):
             env_msgs.append(m)
         elif not content.startswith("[自动路由]"):
             old_role_contents.add(content)
