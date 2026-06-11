@@ -169,9 +169,10 @@ async def _async_main():
         if "\n" in user_input:
             display_text += " ..."
         label = f"  › {display_text} "
+        pad_line = " " * width
         sys.stdout.write("\033[A\r\033[K")
         _console.print(
-            f"[white on grey23]{label}{' ' * max(0, width - len(label))}[/white on grey23]"
+            f"[white on grey23]{pad_line}\n{label}{' ' * max(0, width - len(label))}\n{pad_line}[/white on grey23]"
         )
 
         try:
