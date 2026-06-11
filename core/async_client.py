@@ -75,10 +75,9 @@ def _try_auto_route(messages):
         return decision, [{
             "role": "system",
             "content": (
-                "[自动路由] 检测到复杂任务，请先调用 agent_planner 进行任务规划，"
-                "然后严格按照规划的步骤顺序，逐个调用相应子智能体执行。"
-                "重要：每次只调用一个子智能体，等它返回结果后再调用下一个，不要并行调用多个。"
-                "全部步骤完成后再给出最终总结回复。"
+                "[自动路由] 检测到多步骤任务。推荐调用 agent_planner 进行任务规划。"
+                "如果你选择不调 planner，也请逐个调用工具完成任务，每次只调一个工具，等返回后再调下一个。"
+                "全部完成后再给出最终总结回复。"
             ),
         }]
 
@@ -94,8 +93,90 @@ def _try_auto_route(messages):
     return decision, None
 
 
+_TOOL_FRIENDLY_NAMES = {
+    "distill_role": "提取角色特征",
+    "save_distilled_role": "创建角色",
+    "web_summary": "获取网页内容",
+    "run_shell": "执行命令",
+    "read_file": "读取文件",
+    "write_file": "写入文件",
+    "get_current_time": "获取时间",
+    "get_weather": "查询天气",
+    "get_location": "获取位置",
+    "calculate": "计算",
+    "npu_info": "查询 NPU 状态",
+    "ascend_build": "编译算子",
+    "ascend_run": "运行算子",
+    "agent_planner": "任务规划",
+    "agent_researcher": "搜索调研",
+    "agent_code_reviewer": "代码审查",
+    "agent_ascend_dev": "算子开发",
+    "agent_ascend_debug": "算子调试",
+}
+
+
+def _tool_display_name(tool_name):
+    """工具名 → 用户友好的显示名"""
+    if tool_name in _TOOL_FRIENDLY_NAMES:
+        return _TOOL_FRIENDLY_NAMES[tool_name]
+    if tool_name.startswith("agent_"):
+        return tool_name[6:]
+    return tool_name
+
+
+def _sync_system_messages(messages):
+    """同步 system 消息：角色切换后确保 messages 中的 system 消息是最新的"""
+    from cli.commands import build_system_messages
+    current_system = build_system_messages()
+    current_contents = {m["content"] for m in current_system}
+
+    old_system = [m for m in messages if m["role"] == "system"]
+    old_role_contents = set()
+    env_msgs = []
+    for m in old_system:
+        content = m["content"]
+        if content.startswith("[当前系统可用工具]") or content.startswith("[以下是更早"):
+            env_msgs.append(m)
+        elif not content.startswith("[自动路由]"):
+            old_role_contents.add(content)
+
+    if old_role_contents != current_contents:
+        non_system = [m for m in messages if m["role"] != "system"]
+        messages.clear()
+        messages.extend(current_system)
+        messages.extend(env_msgs)
+        messages.extend(non_system)
+
+
+def _clean_route_messages(messages):
+    """清理上一轮残留的 [自动路由] 消息，避免累积"""
+    i = 0
+    while i < len(messages):
+        if messages[i].get("role") == "system" and messages[i].get("content", "").startswith("[自动路由]"):
+            messages.pop(i)
+        else:
+            i += 1
+
+
+def _track_tool_start(tool_name):
+    """工具开始执行时，在 taskboard 上显示为 running（第二个工具起才显示）"""
+    from agents import _active_taskboard
+    if not _active_taskboard:
+        return
+    display = _tool_display_name(tool_name)
+    _active_taskboard.add_or_update(display, "running")
+
+
+def _track_tool_done(tool_name):
+    """工具执行完毕，标记为 done"""
+    from agents import _active_taskboard
+    if _active_taskboard:
+        display = _tool_display_name(tool_name)
+        _active_taskboard.add_or_update(display, "done")
+
+
 def _advance_next_step():
-    """主模型直接调用基础 skill 时，推进下一个 pending 步骤为 running"""
+    """有 plan 时推进下一个 pending 步骤"""
     from agents.context import get_context
     from agents import _sync_taskboard
     ctx = get_context()
@@ -107,7 +188,7 @@ def _advance_next_step():
 
 
 def _complete_current_step():
-    """基础 skill 执行完毕后，将当前 running 步骤标记为 done"""
+    """有 plan 时将当前 running 步骤标记为 done"""
     from agents.context import get_context
     from agents import _sync_taskboard
     ctx = get_context()
@@ -121,7 +202,7 @@ def _complete_current_step():
 
 
 def _complete_remaining_steps():
-    """主模型最终输出文本前，将所有剩余 pending/running 步骤标记为 done"""
+    """最终输出前，将所有剩余 pending/running 步骤标记为 done"""
     from agents.context import get_context
     from agents import _sync_taskboard
     ctx = get_context()
@@ -139,8 +220,10 @@ def _complete_remaining_steps():
 async def send(client, messages):
     """
     异步发送消息并自动处理工具调用循环。
-    支持自动路由 + 自动推进任务板步骤。
+    每次调用前清理上一轮残留的路由指令。
     """
+    _clean_route_messages(messages)
+
     if config.AUTO_ROUTE:
         decision, route_msgs = _try_auto_route(messages)
         if decision:
@@ -148,7 +231,11 @@ async def send(client, messages):
         if route_msgs:
             for msg in route_msgs:
                 messages.append(msg)
+
+    _tool_call_count = 0
+    _pending_first_tool = None
     while True:
+        _sync_system_messages(messages)
         kwargs = _build_kwargs(messages)
         response = await client.chat.completions.create(**kwargs)
 
@@ -176,27 +263,43 @@ async def send(client, messages):
 
         tool_calls = result["tool_calls"]
 
-        for tc in tool_calls:
-            yield {"type": "tool_exec", "name": tc["name"], "args": tc["args"]}
+        from agents.context import get_context as _get_ctx
 
         agent_calls = [tc for tc in tool_calls if tc["name"].startswith("agent_")]
         other_calls = [tc for tc in tool_calls if not tc["name"].startswith("agent_")]
 
         for tc in agent_calls:
+            _tool_call_count += 1
+            yield {"type": "tool_exec", "name": tc["name"], "args": tc["args"]}
             tool_result = await skills.async_call(tc["name"], tc["args"])
             yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})
-
-        if other_calls:
-            _advance_next_step()
 
         for tc in other_calls:
+            _tool_call_count += 1
+            has_plan = _get_ctx().has_plan
+            if has_plan:
+                _advance_next_step()
+
+            if _tool_call_count == 1 and not has_plan:
+                _pending_first_tool = tc["name"]
+            elif _tool_call_count == 2 and _pending_first_tool and not has_plan:
+                _track_tool_done(_pending_first_tool)
+                _pending_first_tool = None
+                _track_tool_start(tc["name"])
+            elif not has_plan:
+                _track_tool_start(tc["name"])
+
+            yield {"type": "tool_exec", "name": tc["name"], "args": tc["args"]}
             tool_result = await skills.async_call(tc["name"], tc["args"])
+
+            if _tool_call_count >= 2 and not has_plan:
+                _track_tool_done(tc["name"])
+            if has_plan:
+                _complete_current_step()
+
             yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})
-
-        if other_calls:
-            _complete_current_step()
 
 
 async def _handle_stream(response):

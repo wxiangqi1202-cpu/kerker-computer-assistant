@@ -1,35 +1,16 @@
 """
-渲染层 —— Markdown 渲染 + 自适应显示 + 任务面板
-spinner 全程运行直到回复完成，然后一次性 Markdown 渲染。
-短回复（≤3行）直接平铺，长回复用左侧竖线包裹。
+渲染层 —— Markdown 渲染 + 任务面板 + spinner 联动
 """
 
 import sys
 import asyncio
 from rich.console import Console
 
-from display.spinner import (
-    Spinner,
-    THINKING_TIPS, GENERATING_TIPS, TOOL_TIPS, AGENT_TIPS,
-)
+from display.spinner import Spinner, THINKING_TIPS, GENERATING_TIPS
 from display.timer import Timer
 from display.md_render import print_markdown
 
 _console = Console()
-
-_ROUTE_TIPS = {
-    "plan": ["启动任务规划...", "拆解子步骤中..."],
-    "single_agent": ["调度专属智能体..."],
-}
-
-
-def _show_route_hint(decision, spinner):
-    """将路由决策转化为 spinner 提示"""
-    action = decision.action
-    if action == "plan":
-        spinner.update(tips=_ROUTE_TIPS["plan"])
-    elif action == "single_agent" and decision.agent_name:
-        spinner.update(tips=[f"调度 {decision.agent_name}..."])
 
 
 def _format_stats(usage, timer):
@@ -42,6 +23,12 @@ def _format_stats(usage, timer):
         total = usage.get("total_tokens", 0)
         parts.append(f"输入 {prompt} + 输出 {completion} = {total} tokens")
     return " | ".join(parts) if parts else None
+
+
+def _tool_tip(tool_name):
+    from core.async_client import _tool_display_name
+    display = _tool_display_name(tool_name)
+    return [f"{display}..."]
 
 
 async def render(event_stream, spinner=None, taskboard=None):
@@ -67,28 +54,24 @@ async def render(event_stream, spinner=None, taskboard=None):
 
             if etype == "route":
                 decision = event.get("decision")
-                if decision:
-                    _show_route_hint(decision, spinner)
+                if decision and decision.action == "plan":
+                    spinner.update(tips=["正在规划任务..."])
+                elif decision and decision.action == "single_agent" and decision.agent_name:
+                    from core.async_client import _tool_display_name
+                    name = _tool_display_name(f"agent_{decision.agent_name}")
+                    spinner.update(tips=[f"{name}..."])
 
-            if etype == "thinking":
+            elif etype == "thinking":
                 spinner.update(tips=THINKING_TIPS)
 
             elif etype == "tool":
-                tool_name = event.get("name", "")
-                if tool_name.startswith("agent_"):
-                    spinner.update(tips=AGENT_TIPS)
-                else:
-                    spinner.update(tips=TOOL_TIPS)
+                spinner.update(tips=_tool_tip(event.get("name", "")))
 
             elif etype == "tool_exec":
-                tool_name = event.get("name", "")
-                if not tool_name.startswith("agent_"):
-                    spinner.update(tips=TOOL_TIPS)
+                spinner.update(tips=_tool_tip(event.get("name", "")))
 
             elif etype == "tool_result":
-                tool_name = event.get("name", "")
-                if not tool_name.startswith("agent_"):
-                    spinner.update(tips=TOOL_TIPS)
+                pass
 
             elif etype == "text":
                 if not receiving_text:
@@ -102,9 +85,9 @@ async def render(event_stream, spinner=None, taskboard=None):
                 usage = event.get("usage")
                 stats = _format_stats(usage, timer)
 
-                if taskboard and taskboard._visible:
-                    await asyncio.sleep(0.8)
-                    taskboard.clear()
+                if taskboard and taskboard.is_finishing:
+                    while taskboard._visible:
+                        await asyncio.sleep(0.08)
 
                 spinner.stop(final_message=stats)
 
@@ -130,10 +113,10 @@ async def render(event_stream, spinner=None, taskboard=None):
             sys.stdout.write(f"\n  \033[2m⏹ 已中断 (ESC)\033[0m\n\n")
             sys.stdout.flush()
         else:
-            agents.clear_plan()
             if taskboard:
                 taskboard.clear()
             spinner.stop()
+            agents.clear_plan()
 
     return reply, assistant_msg
 

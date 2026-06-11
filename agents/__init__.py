@@ -153,14 +153,11 @@ def _register_as_skill(agent):
             return "规划已完成，请根据现有规划继续执行。"
 
         if _active_spinner:
-            from display.spinner import AGENT_TIPS
-            _active_spinner.update_sub(agent.name, AGENT_TIPS)
+            _active_spinner.update_sub(agent.name, [f"{agent.name} 工作中..."])
 
         matched_step = None
 
         if agent.name == "planner":
-            if _active_taskboard:
-                _active_taskboard.add_or_update("规划中...", "running")
             ctx.set_original_task(task)
             _planner_used = True
         else:
@@ -181,9 +178,6 @@ def _register_as_skill(agent):
                 if steps:
                     ctx.set_plan(steps)
                     _sync_taskboard()
-                else:
-                    if _active_taskboard:
-                        _active_taskboard.add_or_update("规划中...", "done")
             else:
                 summary = _summarize_result(result)
                 ctx.add_memory(agent.name, task[:200], summary)
@@ -198,8 +192,6 @@ def _register_as_skill(agent):
             if matched_step:
                 ctx.fail_step(matched_step, error=str(err)[:100])
                 _sync_taskboard()
-            elif agent.name == "planner" and _active_taskboard:
-                _active_taskboard.add_or_update("规划中...", "error")
 
             ctx.add_memory(agent.name, task[:200], error_msg)
             result = error_msg
