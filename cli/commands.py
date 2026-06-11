@@ -95,7 +95,7 @@ def _apply_model(model_name, ctx):
     config.save_user_config()
 
 
-@command("/role", "切换/新建角色")
+@command("/role", "切换/新建/管理角色")
 def cmd_role(args, ctx):
     if args.strip() == "new":
         _create_role(ctx)
@@ -116,12 +116,15 @@ def cmd_role(args, ctx):
         for name in role_names
     ]
     items.append({"label": "+ 新建角色", "hint": ""})
+    items.append({"label": "  管理角色", "hint": "查看/编辑/删除"})
 
     idx = pick(items, title="↑↓ 选择角色, Enter 确认, ESC 取消", current_idx=current_idx)
     if idx is None:
         return
     if idx == len(role_names):
         _create_role(ctx)
+    elif idx == len(role_names) + 1:
+        _manage_roles(ctx)
     else:
         _apply_role(role_names[idx], ctx)
 
@@ -132,10 +135,12 @@ def _apply_role(role_name, ctx):
     non_system = [m for m in ctx["messages"] if m["role"] != "system"]
     ctx["messages"] = clean_for_api(build_system_messages() + non_system)
     config.save_user_config()
+    _console.print(f"  [green]✓ 已切换: {role_name}[/green]")
 
 
 def _create_role(ctx):
     _console.print("  [cyan]新建角色[/cyan]")
+    _console.print("  [dim]提示：也可以在对话中说'帮我创建一个xxx角色'来自动蒸馏[/dim]")
     try:
         name = input("  角色名称: ").strip()
         if not name:
@@ -153,11 +158,107 @@ def _create_role(ctx):
         if not prompts:
             _console.print("  [red]至少需要一条提示词[/red]")
             return
+
+        inject_items = [
+            {"label": "是，自动注入", "hint": "推荐"},
+            {"label": "否，纯净角色", "hint": "不带工具能力"},
+        ]
+        inject_idx = pick(inject_items, title="是否注入工具/探索/智能体能力？")
+        if inject_idx is None:
+            return
+        if inject_idx == 0:
+            prompts.append(config.TOOL_DIRECTIVE)
+            prompts.append(config.EXPLORE_DIRECTIVE)
+            prompts.append(config.AGENT_DIRECTIVE)
+
         config.ROLES[name] = prompts
         _apply_role(name, ctx)
         _console.print(f"  [green]✓ 已创建: {name}[/green]")
     except (EOFError, KeyboardInterrupt):
         _console.print("\n  [dim]已取消[/dim]")
+
+
+def _manage_roles(ctx):
+    builtin = config._BUILTIN_ROLES
+    user_roles = [name for name in config.ROLES if name not in builtin]
+
+    if not user_roles:
+        _console.print("  [dim]没有用户自建角色。内置角色不可编辑。[/dim]")
+        return
+
+    items = [{"label": name, "hint": "✓" if name == config.CURRENT_ROLE else ""} for name in user_roles]
+    idx = pick(items, title="选择要管理的角色")
+    if idx is None:
+        return
+
+    role_name = user_roles[idx]
+    actions = [
+        {"label": "查看 Prompt", "hint": ""},
+        {"label": "编辑 Prompt", "hint": ""},
+        {"label": "删除角色", "hint": ""},
+    ]
+    action_idx = pick(actions, title=f"管理: {role_name}")
+    if action_idx is None:
+        return
+
+    if action_idx == 0:
+        _view_role(role_name)
+    elif action_idx == 1:
+        _edit_role(role_name, ctx)
+    elif action_idx == 2:
+        _delete_role(role_name, ctx)
+
+
+def _view_role(role_name):
+    prompts = config.ROLES.get(role_name, [])
+    _console.print(f"\n  [cyan]{role_name}[/cyan] [dim]({len(prompts)} 条提示词)[/dim]\n")
+    for i, p in enumerate(prompts, 1):
+        display = p[:80] + "..." if len(p) > 80 else p
+        _console.print(f"  [dim]{i}.[/dim] {display}")
+    _console.print()
+
+
+def _edit_role(role_name, ctx):
+    prompts = list(config.ROLES.get(role_name, []))
+    _console.print(f"  [cyan]编辑: {role_name}[/cyan]")
+    _console.print("  [dim]当前提示词:[/dim]")
+    for i, p in enumerate(prompts, 1):
+        display = p[:60] + "..." if len(p) > 60 else p
+        _console.print(f"  [dim]{i}.[/dim] {display}")
+    _console.print()
+    _console.print("  [dim]输入新的提示词（每行一条，空行结束）。留空保持原样:[/dim]")
+    try:
+        new_prompts = []
+        while True:
+            line = input("  > ").strip()
+            if not line:
+                break
+            new_prompts.append(line)
+        if new_prompts:
+            config.ROLES[role_name] = new_prompts
+            if config.CURRENT_ROLE == role_name:
+                _apply_role(role_name, ctx)
+            config.save_user_config()
+            _console.print(f"  [green]✓ 已更新: {role_name}[/green]")
+        else:
+            _console.print("  [dim]未修改[/dim]")
+    except (EOFError, KeyboardInterrupt):
+        _console.print("\n  [dim]已取消[/dim]")
+
+
+def _delete_role(role_name, ctx):
+    if role_name == config.CURRENT_ROLE:
+        _console.print("  [red]不能删除当前使用中的角色，请先切换到其他角色[/red]")
+        return
+    try:
+        confirm = input(f"  确认删除 [{role_name}]? (y/N): ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        _console.print("\n  [dim]已取消[/dim]")
+        return
+    if confirm == "y":
+        del config.ROLES[role_name]
+        config.save_user_config()
+        _console.print(f"  [green]✓ 已删除: {role_name}[/green]")
 
 
 @command("/resume", "对话管理")
