@@ -6,9 +6,6 @@ import sys
 import asyncio
 import skills
 from rich.console import Console
-from rich.panel import Panel
-from rich.text import Text
-from rich.columns import Columns
 
 from core import config
 from core.async_client import create_client, send
@@ -19,6 +16,7 @@ from display.spinner import CONNECTING_TIPS
 from cli.completer import create_session
 from cli.registry import dispatch
 from cli.commands import build_system_messages
+from cli.welcome import show_welcome
 import cli.commands  # noqa: F401  触发 @command 注册
 import agents  # noqa: F401  触发子智能体加载
 
@@ -32,40 +30,6 @@ try:
 except Exception:
     pass
 
-
-def _show_welcome():
-    width = min(_console.width, 60)
-    logo = Text()
-    logo.append("\n")
-    logo.append("  K e r K e r\n", style="bold cyan")
-    logo.append("  Computational Agent Framework\n", style="dim italic")
-    panel = Panel(logo, border_style="cyan", width=width, padding=(0, 2))
-    _console.print()
-    _console.print(panel)
-    _console.print()
-    agent_count = len(agents.get_all_agents())
-    skill_count = len(skills.get_skill_names())
-    mode = "流式" if config.STREAM else "非流式"
-    col_left = Text()
-    col_left.append("  模型  ", style="dim")
-    col_left.append(f"{config.MODEL}\n", style="white")
-    col_left.append("  角色  ", style="dim")
-    col_left.append(config.CURRENT_ROLE, style="white")
-    col_right = Text()
-    col_right.append("  技能  ", style="dim")
-    col_right.append(f"{skill_count} 个\n", style="white")
-    col_right.append("  智能体  ", style="dim")
-    col_right.append(f"{agent_count} 个", style="white")
-    _console.print(Columns([col_left, col_right], padding=(0, 4)))
-    _console.print()
-    _console.print('  [dim]/help 命令 · /fast 极速 · /deep 深度 · ESC 中断 · /exit 退出[/dim]')
-
-    import os
-    autosave_path = os.path.join(config.HISTORY_DIR, "_autosave.json")
-    if os.path.isfile(autosave_path):
-        _console.print('  [dim]检测到上次对话，输入 /resume 恢复[/dim]')
-
-    _console.print()
 
 
 async def _read_multiline(session):
@@ -153,7 +117,7 @@ async def _async_main():
     if env_prompt:
         messages.append({"role": "system", "content": env_prompt})
 
-    _show_welcome()
+    show_welcome()
 
     ctx = {
         "messages": messages,

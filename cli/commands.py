@@ -310,6 +310,27 @@ def cmd_exit(args, ctx):
     ctx["should_exit"] = True
 
 
+@command("/welcome", "切换启动页风格")
+def cmd_welcome(args, ctx):
+    from cli.welcome import show_welcome, save_welcome_style, WELCOME_STYLES, get_style_desc
+
+    if args.strip() in WELCOME_STYLES:
+        save_welcome_style(args.strip())
+        show_welcome(args.strip())
+        return
+
+    desc = get_style_desc()
+    items = [
+        {"label": name, "hint": desc.get(name, "")}
+        for name in WELCOME_STYLES
+    ]
+    idx = pick(items, title="选择启动页风格，Enter 预览并保存")
+    if idx is not None:
+        chosen = WELCOME_STYLES[idx]
+        save_welcome_style(chosen)
+        show_welcome(chosen)
+
+
 @command("/theme", "切换渲染主题")
 def cmd_theme(args, ctx):
     from display.theme import get_theme, set_theme, get_theme_names
