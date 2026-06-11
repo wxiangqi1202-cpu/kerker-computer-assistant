@@ -71,9 +71,8 @@ def clean_for_api(messages):
                 pending_tool_ids.discard(tid)
         else:
             if pending_tool_ids:
-                back = []
                 while cleaned and cleaned[-1].get("role") == "tool":
-                    back.append(cleaned.pop())
+                    cleaned.pop()
                 if cleaned and cleaned[-1].get("tool_calls"):
                     cleaned.pop()
                 pending_tool_ids.clear()

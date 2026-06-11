@@ -54,9 +54,15 @@ def get_skill_names():
 def call(name, arguments_json):
     if name not in _registry:
         return f"未知技能: {name}"
-    args = json.loads(arguments_json) if arguments_json else {}
-    result = _registry[name]["func"](**args)
-    return str(result)
+    try:
+        args = json.loads(arguments_json) if arguments_json else {}
+    except json.JSONDecodeError as err:
+        return f"参数解析失败（模型返回了不完整的 JSON）: {err}"
+    try:
+        result = _registry[name]["func"](**args)
+        return str(result)
+    except Exception as err:
+        return f"技能 {name} 执行出错: {err}"
 
 
 async def async_call(name, arguments_json):
@@ -64,13 +70,19 @@ async def async_call(name, arguments_json):
     import inspect
     if name not in _registry:
         return f"未知技能: {name}"
-    args = json.loads(arguments_json) if arguments_json else {}
-    func = _registry[name]["func"]
-    if inspect.iscoroutinefunction(func):
-        result = await func(**args)
-    else:
-        result = await asyncio.to_thread(func, **args)
-    return str(result)
+    try:
+        args = json.loads(arguments_json) if arguments_json else {}
+    except json.JSONDecodeError as err:
+        return f"参数解析失败（模型返回了不完整的 JSON）: {err}"
+    try:
+        func = _registry[name]["func"]
+        if inspect.iscoroutinefunction(func):
+            result = await func(**args)
+        else:
+            result = await asyncio.to_thread(func, **args)
+        return str(result)
+    except Exception as err:
+        return f"技能 {name} 执行出错: {err}"
 
 
 def _auto_load():

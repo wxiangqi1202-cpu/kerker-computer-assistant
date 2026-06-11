@@ -135,9 +135,11 @@ def _sync_system_messages(messages):
     env_msgs = []
     for m in old_system:
         content = m["content"]
+        if content.startswith("[自动路由]") or content.startswith("[已有角色]"):
+            continue
         if any(content.startswith(p) for p in ("[当前系统可用工具]", "[以下是更早", "[用户记忆]", "[近期对话摘要]")):
             env_msgs.append(m)
-        elif not content.startswith("[自动路由]"):
+        else:
             old_role_contents.add(content)
 
     if old_role_contents != current_contents:
@@ -146,6 +148,21 @@ def _sync_system_messages(messages):
         messages.extend(current_system)
         messages.extend(env_msgs)
         messages.extend(non_system)
+
+    role_list = ", ".join(config.ROLES.keys())
+    role_info = (
+        f"[已有角色] 当前: {config.CURRENT_ROLE}。可切换: {role_list}。"
+        "用户说'切换到xxx'时，应先调 switch_role 切换已有角色，不要直接创建新角色。"
+    )
+    existing = [i for i, m in enumerate(messages) if m.get("role") == "system" and m.get("content", "").startswith("[已有角色]")]
+    if existing:
+        messages[existing[0]]["content"] = role_info
+    else:
+        system_end = 0
+        for i, m in enumerate(messages):
+            if m["role"] == "system":
+                system_end = i + 1
+        messages.insert(system_end, {"role": "system", "content": role_info})
 
 
 def _clean_route_messages(messages):
@@ -232,7 +249,7 @@ async def send(client, messages):
             for msg in route_msgs:
                 messages.append(msg)
 
-    _tool_call_count = 0
+    _other_tool_count = 0
     _pending_first_tool = None
     while True:
         _sync_system_messages(messages)
@@ -269,31 +286,30 @@ async def send(client, messages):
         other_calls = [tc for tc in tool_calls if not tc["name"].startswith("agent_")]
 
         for tc in agent_calls:
-            _tool_call_count += 1
             yield {"type": "tool_exec", "name": tc["name"], "args": tc["args"]}
             tool_result = await skills.async_call(tc["name"], tc["args"])
             yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})
 
         for tc in other_calls:
-            _tool_call_count += 1
+            _other_tool_count += 1
             has_plan = _get_ctx().has_plan
             if has_plan:
                 _advance_next_step()
 
-            if _tool_call_count == 1 and not has_plan:
+            if _other_tool_count == 1 and not has_plan:
                 _pending_first_tool = tc["name"]
-            elif _tool_call_count == 2 and _pending_first_tool and not has_plan:
+            elif _other_tool_count == 2 and _pending_first_tool and not has_plan:
                 _track_tool_done(_pending_first_tool)
                 _pending_first_tool = None
                 _track_tool_start(tc["name"])
-            elif not has_plan:
+            elif _other_tool_count > 2 and not has_plan:
                 _track_tool_start(tc["name"])
 
             yield {"type": "tool_exec", "name": tc["name"], "args": tc["args"]}
             tool_result = await skills.async_call(tc["name"], tc["args"])
 
-            if _tool_call_count >= 2 and not has_plan:
+            if _other_tool_count >= 2 and not has_plan:
                 _track_tool_done(tc["name"])
             if has_plan:
                 _complete_current_step()

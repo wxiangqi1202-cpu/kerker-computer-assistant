@@ -85,11 +85,9 @@ _CONTINUE_PATTERNS = [
 
 
 _INTENT_PLAN_PATTERNS = [
-    re.compile(r"(创建|生成|打造|设定|扮演|模仿|模拟|蒸馏|我要|来一个|给我).{0,12}(角色|人设|persona|人格)", _I),
-    re.compile(r"(我想和|让你扮演|变成|化身|假装你是|你现在是).{1,12}(对话|聊天|说话|交流|讨论)?", _I),
+    re.compile(r"(创建|生成|打造|蒸馏|新建).{0,12}(角色|人设|persona|人格)", _I),
     re.compile(r"(角色|人设).{0,4}(创建|生成|蒸馏|定制)", _I),
     re.compile(r"\b(create|make|build|generate|craft).{0,20}(role|persona|character)\b", _I),
-    re.compile(r"\b(act as|pretend|roleplay|role.?play|impersonate)\b", _I),
     re.compile(r".{2,}(然后|再|接着|之后).{2,}(发送|发到|推送|通知|发给)", _I),
     re.compile(r".{2,}(然后|再|接着|之后).{2,}(整理|总结|生成|写成|输出)", _I),
     re.compile(r"\b.{3,}(then|and).{3,}(send|push|notify|forward)\b", _I),

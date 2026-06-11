@@ -127,6 +127,11 @@ async def _async_main():
     if epi_prompt:
         messages.append({"role": "system", "content": epi_prompt})
 
+    role_list = ", ".join(config.ROLES.keys())
+    messages.append({"role": "system", "content":
+        f"[已有角色] 当前: {config.CURRENT_ROLE}。可用: {role_list}"
+    })
+
     show_welcome()
 
     ctx = {
@@ -186,6 +191,7 @@ async def _async_main():
         )
 
         try:
+            msg_snapshot = len(messages)
             spinner.update(tips=CONNECTING_TIPS)
             event_stream = send(api_client, messages)
             reply, assistant_msg = await render(event_stream, spinner=spinner, taskboard=taskboard)
@@ -201,12 +207,24 @@ async def _async_main():
         except asyncio.CancelledError:
             spinner.stop()
             taskboard.clear()
-            messages.pop()
+            del messages[msg_snapshot:]
         except Exception as error:
             spinner.stop()
             taskboard.clear()
-            _console.print(f"\n  [red]请求出错: {error}[/red]")
-            messages.pop()
+            del messages[msg_snapshot:]
+            err_str = str(error)
+            if "api_key" in err_str.lower() or "auth" in err_str.lower() or "401" in err_str:
+                _console.print("\n  [red]API Key 无效或已过期，请运行 /config 重新配置[/red]")
+            elif "connect" in err_str.lower() or "timeout" in err_str.lower() or "网络" in err_str:
+                _console.print("\n  [red]网络连接失败，请检查网络后重试[/red]")
+            elif "rate" in err_str.lower() or "429" in err_str:
+                _console.print("\n  [red]请求过于频繁，请稍后再试[/red]")
+            elif "model" in err_str.lower() and ("not found" in err_str.lower() or "不存在" in err_str):
+                _console.print(f"\n  [red]模型 {config.MODEL} 不可用，请用 /model 切换[/red]")
+            else:
+                short = err_str[:120] + "..." if len(err_str) > 120 else err_str
+                _console.print(f"\n  [red]出错: {short}[/red]")
+                _console.print("  [dim]如果持续出错，试试 /clear 清空对话或 /fast 切换模式[/dim]")
 
 
 def main():

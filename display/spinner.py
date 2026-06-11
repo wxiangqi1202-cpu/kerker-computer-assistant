@@ -194,7 +194,7 @@ class Spinner:
     def stop(self, final_message=None):
         self._running = False
         if self._thread:
-            self._thread.join(timeout=2.0)
+            self._thread.join(timeout=3.0)
             self._thread = None
         if self._key_thread:
             self._key_thread.join(timeout=0.5)

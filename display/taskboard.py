@@ -32,6 +32,11 @@ class TaskBoard:
         with self._lock:
             return self._finishing
 
+    @property
+    def is_visible(self):
+        with self._lock:
+            return self._visible
+
     def add_or_update(self, name, status):
         with self._lock:
             for task in self._tasks:
@@ -64,13 +69,6 @@ class TaskBoard:
             self._visible = bool(self._tasks)
             self._check_done()
 
-    def advance_first_pending(self):
-        with self._lock:
-            for task in self._tasks:
-                if task["status"] == "pending":
-                    task["status"] = "running"
-                    return task["name"]
-        return None
 
     def _check_done(self):
         if not self._tasks:

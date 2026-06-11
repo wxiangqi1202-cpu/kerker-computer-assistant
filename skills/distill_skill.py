@@ -111,10 +111,10 @@ def distill_role(name, description=""):
         )
         result_text = response.choices[0].message.content or ""
 
-        start = result_text.find("{")
-        end = result_text.rfind("}") + 1
-        if start >= 0 and end > start:
-            data = json.loads(result_text[start:end])
+        from agents import _extract_first_json
+        json_str = _extract_first_json(result_text)
+        if json_str:
+            data = json.loads(json_str)
             if "prompts" in data and len(data.get("prompts", [])) >= 3:
                 return json.dumps(data, ensure_ascii=False, indent=2)
 
@@ -136,11 +136,9 @@ def distill_role(name, description=""):
 register(
     name="distill_role",
     description=(
-        "角色蒸馏：根据人物/角色名称搜索多源资料（维基百科、百度百科、维基语录），"
-        "从7个维度深度提取特征（身份/说话风格/思维方式/性格/知识/价值观/互动习惯），"
-        "生成5-8条具体的角色system prompt。"
-        "适用于用户说'创建xxx角色'、'我想和xxx对话'、'扮演xxx'时调用。"
-        "调用后必须紧接着调用 save_distilled_role 保存结果。"
+        "角色蒸馏：根据人物/角色名称搜索多源资料，"
+        "深度提取特征并生成角色 system prompt。"
+        "适用于创建新角色。调用后必须紧接着调用 save_distilled_role 保存结果。"
     ),
     parameters={
         "type": "object",

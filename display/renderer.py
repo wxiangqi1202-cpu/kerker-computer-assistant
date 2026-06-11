@@ -86,7 +86,7 @@ async def render(event_stream, spinner=None, taskboard=None):
                 stats = _format_stats(usage, timer)
 
                 if taskboard and taskboard.is_finishing:
-                    while taskboard._visible:
+                    while taskboard.is_visible:
                         await asyncio.sleep(0.08)
 
                 spinner.stop(final_message=stats)
@@ -110,6 +110,7 @@ async def render(event_stream, spinner=None, taskboard=None):
             if taskboard:
                 taskboard.clear()
             spinner.stop()
+            agents.clear_plan()
             sys.stdout.write(f"\n  \033[2m⏹ 已中断 (ESC)\033[0m\n\n")
             sys.stdout.flush()
         else:
