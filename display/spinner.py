@@ -185,6 +185,13 @@ class Spinner:
         if self._line_count > 0:
             output += f"\033[{self._line_count}A\r"
         output += "\n".join(buf) + "\n"
+
+        stale = self._line_count - total_lines
+        if stale > 0:
+            for _ in range(stale):
+                output += "\033[2K\n"
+            output += f"\033[{stale}A"
+
         sys.stdout.write(output)
         sys.stdout.flush()
         self._line_count = total_lines
