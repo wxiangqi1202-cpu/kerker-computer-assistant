@@ -1,0 +1,27 @@
+{
+  "_说明": "KerKer 用户配置模板 — 复制到 ~/.kerker/config.json 后按需修改",
+  "_文档": "首次运行 kerker 会自动引导配置，也可手动编辑此文件",
+
+  "MODEL": "deepseek-v4-flash",
+  "ENABLE_THINKING": false,
+  "REASONING_EFFORT": "low",
+  "STREAM": true,
+  "MAX_CONTEXT_MESSAGES": 40,
+  "AUTO_ROUTE": true,
+  "CURRENT_ROLE": "默认",
+
+  "_MODEL_选项": [
+    "deepseek-v4-flash   — 极速模式，日常对话",
+    "deepseek-v4-pro     — 深度模式，复杂推理",
+    "deepseek-reasoner   — 推理专用模型"
+  ],
+  "_REASONING_EFFORT_选项": ["low", "medium", "high"],
+  "_CURRENT_ROLE_选项": ["默认", "代码助手", "翻译官", "写作助理", "算子开发"],
+
+  "USER_ROLES": {
+    "_自定义角色示例": [
+      "你是一个专注于 XX 领域的助手。",
+      "回答使用中文，简洁明了。"
+    ]
+  }
+}
