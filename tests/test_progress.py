@@ -171,5 +171,130 @@ class TestProgressTrackerContext(unittest.TestCase):
         self.assertIn("找到3个候选方案", ctx)
 
 
+class TestProgressTrackerEdgeCases(unittest.TestCase):
+    """边界情况和稳定性测试"""
+
+    def test_finish_all_no_steps_is_noop(self):
+        """无步骤时 finish_all 不应设置 is_finished"""
+        tracker = ProgressTracker()
+        tracker.finish_all()
+        self.assertFalse(tracker.is_finished)
+        self.assertEqual(tracker.get_snapshot(), [])
+
+    def test_repeated_tool_names_deduped(self):
+        """重复工具名应自动添加序号"""
+        tracker = ProgressTracker()
+        tracker.tool_start("搜索")
+        tracker.tool_start("搜索")
+        tracker.tool_start("搜索")
+        snapshot = tracker.get_snapshot()
+        names = [name for name, _ in snapshot]
+        self.assertEqual(names[0], "搜索")
+        self.assertEqual(names[1], "搜索②")
+        self.assertEqual(names[2], "搜索③")
+
+    def test_tool_done_matches_deduped_name(self):
+        """tool_done 应能匹配去重后的名称"""
+        tracker = ProgressTracker()
+        tracker.tool_start("搜索")
+        tracker.tool_done("搜索")
+        tracker.tool_start("搜索")
+        tracker.tool_done("搜索")
+        snapshot = tracker.get_snapshot()
+        self.assertEqual(snapshot[0][1], "done")
+        self.assertEqual(snapshot[1][1], "done")
+
+    def test_reset_clears_tool_name_counts(self):
+        """reset 后工具名计数清零"""
+        tracker = ProgressTracker()
+        tracker.tool_start("搜索")
+        tracker.tool_start("搜索")
+        tracker.reset()
+        tracker.tool_start("搜索")
+        snapshot = tracker.get_snapshot()
+        self.assertEqual(snapshot[0][0], "搜索")
+
+    def test_agent_start_without_plan_returns_none(self):
+        """非 PLAN_MODE 下 agent_start 返回 None"""
+        tracker = ProgressTracker()
+        result = tracker.agent_start("researcher")
+        self.assertIsNone(result)
+
+    def test_agent_done_without_running_step(self):
+        """agent_done 在无 running 步骤时不崩溃"""
+        tracker = ProgressTracker()
+        tracker.set_plan([{"step": "步骤1", "agent": "researcher"}])
+        tracker.agent_done("researcher")
+        snapshot = tracker.get_snapshot()
+        self.assertEqual(snapshot[0][1], "pending")
+
+    def test_multiple_finish_all_idempotent(self):
+        """多次 finish_all 结果一致"""
+        tracker = ProgressTracker()
+        tracker.tool_start("A")
+        tracker.finish_all()
+        snapshot1 = tracker.get_snapshot()
+        tracker.finish_all()
+        snapshot2 = tracker.get_snapshot()
+        self.assertEqual(snapshot1, snapshot2)
+
+    def test_plan_mode_to_idle_after_reset(self):
+        """reset 后从 PLAN_MODE 回到 IDLE"""
+        tracker = ProgressTracker()
+        tracker.set_plan([{"step": "X", "agent": ""}])
+        self.assertTrue(tracker.has_plan)
+        tracker.reset()
+        self.assertFalse(tracker.has_plan)
+        self.assertEqual(tracker.mode, ProgressMode.IDLE)
+
+    def test_different_tools_not_deduped(self):
+        """不同工具名称不应互相影响"""
+        tracker = ProgressTracker()
+        tracker.tool_start("搜索")
+        tracker.tool_start("读取文件")
+        tracker.tool_start("搜索")
+        snapshot = tracker.get_snapshot()
+        names = [name for name, _ in snapshot]
+        self.assertEqual(names[0], "搜索")
+        self.assertEqual(names[1], "读取文件")
+        self.assertEqual(names[2], "搜索②")
+
+
+class TestTaskBoardRenderer(unittest.TestCase):
+    """TaskBoard 渲染器边界测试"""
+
+    def test_no_tracker_returns_empty(self):
+        from display.taskboard import TaskBoard
+        board = TaskBoard()
+        self.assertEqual(board.get_lines(tick=0), [])
+
+    def test_cleared_then_new_content_auto_reset(self):
+        """clear 后如果 tracker 有新可见内容，应自动恢复"""
+        from display.taskboard import TaskBoard
+        tracker = ProgressTracker()
+        board = TaskBoard()
+        board.set_tracker(tracker)
+
+        tracker.tool_start("A")
+        tracker.tool_start("B")
+        board.clear()
+        self.assertEqual(board.get_lines(tick=0), [])
+
+        tracker.reset()
+        tracker.tool_start("C")
+        tracker.tool_start("D")
+        lines = board.get_lines(tick=0)
+        self.assertTrue(len(lines) > 0)
+
+    def test_single_tool_not_visible(self):
+        """单个工具调用不应显示面板"""
+        from display.taskboard import TaskBoard
+        tracker = ProgressTracker()
+        board = TaskBoard()
+        board.set_tracker(tracker)
+        tracker.tool_start("搜索")
+        self.assertEqual(board.get_lines(tick=0), [])
+
+
 if __name__ == "__main__":
     unittest.main()

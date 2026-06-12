@@ -93,12 +93,19 @@ async def render(event_stream, spinner=None, taskboard=None):
                 usage = event.get("usage")
                 stats = _format_stats(usage, timer)
 
-                if taskboard and taskboard.is_finishing:
-                    wait_start = asyncio.get_event_loop().time()
-                    while taskboard.is_visible and taskboard.is_finishing:
-                        await asyncio.sleep(0.06)
-                        if asyncio.get_event_loop().time() - wait_start > 2.0:
-                            break
+                if taskboard:
+                    from core.progress import get_tracker
+                    tracker = get_tracker()
+                    if tracker.is_finished and tracker.is_visible:
+                        wait_start = asyncio.get_event_loop().time()
+                        while asyncio.get_event_loop().time() - wait_start < 2.0:
+                            if taskboard.is_finishing:
+                                break
+                            await asyncio.sleep(0.05)
+                        while taskboard.is_finishing:
+                            await asyncio.sleep(0.06)
+                            if asyncio.get_event_loop().time() - wait_start > 3.0:
+                                break
 
                 spinner.stop(final_message=stats)
 
@@ -118,11 +125,12 @@ async def render(event_stream, spinner=None, taskboard=None):
             cancel_task.cancel()
         import agents
         from core.progress import get_tracker
+        tracker = get_tracker()
         if spinner.interrupted:
             if taskboard:
                 taskboard.clear()
             spinner.stop()
-            get_tracker().reset()
+            tracker.reset()
             agents.clear_plan()
             sys.stdout.write(f"\n  \033[2m⏹ 已中断 (ESC)\033[0m\n\n")
             sys.stdout.flush()

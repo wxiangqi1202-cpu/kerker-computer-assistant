@@ -14,9 +14,8 @@
 
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 
 class ProgressMode(Enum):
@@ -52,12 +51,13 @@ class ProgressTracker:
         self._lock = threading.Lock()
         self._mode = ProgressMode.IDLE
         self._steps: list[ProgressStep] = []
-        self._tool_history: list[ProgressStep] = []
         self._original_task: str = ""
         self._memory: list[dict] = []
         self._finished = False
         self._finish_time: float = 0.0
         self._visible = False
+        self._tool_name_counts: dict[str, int] = {}
+        self._generation: int = 0
 
     @property
     def mode(self):
@@ -125,16 +125,19 @@ class ProgressTracker:
     def tool_start(self, tool_name: str):
         """
         工具开始执行。
-        PLAN_MODE: 推进匹配的 plan step 为 running
+        PLAN_MODE: 忽略（由 agent_start 管理步骤）
         TOOL_MODE/IDLE: 自动进入 TOOL_MODE，追加工具条目
+        重复工具名自动添加序号（搜索, 搜索②, 搜索③）
         """
         with self._lock:
             if self._mode == ProgressMode.PLAN_MODE:
                 return
             if self._mode == ProgressMode.IDLE:
                 self._mode = ProgressMode.TOOL_MODE
+
+            display_name = self._dedupe_tool_name(tool_name)
             step = ProgressStep(
-                name=tool_name,
+                name=display_name,
                 status=StepStatus.RUNNING,
                 started_at=time.time(),
             )
@@ -143,17 +146,29 @@ class ProgressTracker:
                 self._visible = True
             self._finished = False
 
+    def _dedupe_tool_name(self, name: str) -> str:
+        """为重复调用的工具生成唯一显示名"""
+        count = self._tool_name_counts.get(name, 0) + 1
+        self._tool_name_counts[name] = count
+        if count == 1:
+            return name
+        circled = "②③④⑤⑥⑦⑧⑨⑩"
+        idx = min(count - 2, len(circled) - 1)
+        return f"{name}{circled[idx]}"
+
     def tool_done(self, tool_name: str):
         """
         工具执行完毕。
-        PLAN_MODE: 由 agent_done 处理
-        TOOL_MODE: 标记对应工具为 DONE
+        PLAN_MODE: 忽略（由 agent_done 管理）
+        TOOL_MODE: 标记最近一个 RUNNING 且名称匹配的工具为 DONE
         """
         with self._lock:
             if self._mode == ProgressMode.PLAN_MODE:
                 return
             for step in reversed(self._steps):
-                if step.name == tool_name and step.status == StepStatus.RUNNING:
+                if step.status == StepStatus.RUNNING and (
+                    step.name == tool_name or step.name.startswith(tool_name)
+                ):
                     step.status = StepStatus.DONE
                     step.finished_at = time.time()
                     break
@@ -202,37 +217,11 @@ class ProgressTracker:
                         step.finished_at = time.time()
                         return
 
-    def advance_next(self, agent_name: str = ""):
-        """推进下一个 pending 步骤为 running（PLAN_MODE 用）"""
-        with self._lock:
-            if self._mode != ProgressMode.PLAN_MODE:
-                return None
-            if agent_name:
-                for step in self._steps:
-                    if step.status == StepStatus.PENDING and step.agent == agent_name:
-                        step.status = StepStatus.RUNNING
-                        step.started_at = time.time()
-                        return step
-            for step in self._steps:
-                if step.status == StepStatus.PENDING:
-                    step.status = StepStatus.RUNNING
-                    step.started_at = time.time()
-                    return step
-            return None
-
-    def complete_current(self, summary: str = ""):
-        """完成当前 running 的步骤"""
-        with self._lock:
-            for step in self._steps:
-                if step.status == StepStatus.RUNNING:
-                    step.status = StepStatus.DONE
-                    step.summary = summary
-                    step.finished_at = time.time()
-                    return
-
     def finish_all(self):
-        """所有工作完成，标记剩余步骤并触发结束。"""
+        """所有工作完成，标记剩余步骤并触发结束。无步骤时为空操作。"""
         with self._lock:
+            if not self._steps:
+                return
             for step in self._steps:
                 if step.status in (StepStatus.PENDING, StepStatus.RUNNING):
                     step.status = StepStatus.DONE
@@ -245,12 +234,19 @@ class ProgressTracker:
         with self._lock:
             self._mode = ProgressMode.IDLE
             self._steps = []
-            self._tool_history = []
             self._original_task = ""
             self._memory = []
             self._finished = False
             self._finish_time = 0.0
             self._visible = False
+            self._tool_name_counts = {}
+            self._generation += 1
+
+    @property
+    def generation(self):
+        """递增计数器，每次 reset 加一。用于检测状态已被重置。"""
+        with self._lock:
+            return self._generation
 
     def add_memory(self, agent_name: str, task: str, summary: str):
         with self._lock:

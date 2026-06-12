@@ -37,6 +37,7 @@ class TaskBoard:
         self._final_count = 0
         self._final_snapshot = []
         self._cleared = False
+        self._cleared_generation = -1
 
     def set_tracker(self, tracker):
         self._tracker = tracker
@@ -56,12 +57,14 @@ class TaskBoard:
         return self._tracker.is_visible
 
     def clear(self):
+        """清除动画状态。记录当前 generation 用于检测 tracker reset。"""
         with self._lock:
             self._finish_anim_start = 0.0
             self._finishing = False
             self._final_count = 0
             self._final_snapshot = []
             self._cleared = True
+            self._cleared_generation = self._tracker.generation if self._tracker else -1
 
     def get_lines(self, tick=0):
         if not self._tracker:
@@ -69,7 +72,10 @@ class TaskBoard:
 
         with self._lock:
             if self._cleared:
-                return []
+                if self._tracker.generation != self._cleared_generation:
+                    self._cleared = False
+                else:
+                    return []
 
             if self._finishing:
                 return self._render_finish_anim(tick)
