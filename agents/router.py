@@ -158,22 +158,27 @@ def _check_continue(text):
 
 def route(user_input, available_agents=None, context=None):
     """
-    判定优先级: 上下文继承 → 简单对话 → 复杂任务 → agent关键词 → 默认
+    判定优先级:
+    1. 明确继续指令 + 有未完成规划 → 继续
+    2. 简单对话 → 直接回答（即使有未完成规划也不强制继续）
+    3. 复杂任务 / agent 关键词 → 规划或单 agent
+    4. 有未完成规划但用户发了新的复杂请求 → 新规划
+    5. 默认直接回答
     """
     text = user_input.strip()
 
     if context and context.has_plan and _check_continue(text):
         return RouteDecision(RouteDecision.PLAN, reason="继承上轮规划")
 
-    if context and context.has_plan:
-        steps = context.plan_steps
-        pending = [s for s in steps if _is_step_pending(s)]
-        if pending:
-            return RouteDecision(RouteDecision.PLAN, reason=f"上轮规划有 {len(pending)} 步未完成")
-
     for pat in _SIMPLE_PATTERNS:
         if pat.search(text):
             return RouteDecision(RouteDecision.DIRECT, reason="简单对话")
+
+    if context and context.has_plan:
+        steps = context.plan_steps
+        pending = [s for s in steps if _is_step_pending(s)]
+        if pending and _calc_complexity(text) >= 2:
+            return RouteDecision(RouteDecision.PLAN, reason=f"上轮规划有 {len(pending)} 步未完成")
 
     for pat in _INTENT_PLAN_PATTERNS:
         if pat.search(text):

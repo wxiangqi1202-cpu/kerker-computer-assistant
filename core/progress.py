@@ -279,6 +279,7 @@ class ProgressTracker:
         """
         中断时保留 plan 状态。
         将 running 步骤回退为 pending，以便下次消息继续执行。
+        递增 generation 以通知 taskboard 重新渲染。
         非 PLAN_MODE 时直接 reset。
         """
         with self._lock:
@@ -287,6 +288,7 @@ class ProgressTracker:
                 self._steps = []
                 self._visible = False
                 self._finished = False
+                self._generation += 1
                 return
             for step in self._steps:
                 if step.status == StepStatus.RUNNING:
@@ -296,6 +298,7 @@ class ProgressTracker:
                 self._steps.pop()
             self._finished = False
             self._visible = bool(self._steps)
+            self._generation += 1
 
     def reset(self):
         """重置所有状态（新一轮对话时调用）"""
