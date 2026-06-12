@@ -4,6 +4,7 @@
 """
 
 import sys
+import getpass
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
@@ -77,7 +78,7 @@ def run_setup():
         _console.print(f"  [dim]{provider['env_hint']}[/dim]")
 
     try:
-        key = input("  API Key: ").strip()
+        key = getpass.getpass("  API Key (输入已隐藏): ").strip()
     except (EOFError, KeyboardInterrupt):
         _console.print("\n  [dim]已跳过[/dim]")
         return False

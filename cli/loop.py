@@ -49,40 +49,77 @@ async def _read_multiline(session):
     return "\n".join(lines)
 
 
+def _estimate_tokens(text):
+    """粗略估算文本 token 数（中文~1.5 token/字，英文~0.25 token/词）"""
+    if not text:
+        return 0
+    chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+    other_chars = len(text) - chinese_chars
+    return int(chinese_chars * 1.5 + other_chars * 0.4)
+
+
+def _msg_tokens(msg):
+    """估算单条消息的 token 数"""
+    content = msg.get("content", "") or ""
+    tokens = _estimate_tokens(content) + 4
+    if msg.get("tool_calls"):
+        for tc in msg["tool_calls"]:
+            func = tc.get("function", {})
+            tokens += _estimate_tokens(func.get("name", "")) + _estimate_tokens(func.get("arguments", ""))
+    return tokens
+
+
+_MAX_CONTEXT_TOKENS = 28000
+
+
 def _trim_context(messages):
     """
-    智能上下文裁剪：超出限制的旧消息压缩为摘要保留，而不是丢弃。
-    保留 system 消息，确保 tool 链完整。
+    Token-aware 上下文裁剪：按 token 预算保留尽可能多的近期消息，
+    超出部分压缩为摘要。保留 system 消息，确保 tool 链完整。
     """
     from core.history import clean_for_api
-    limit = config.MAX_CONTEXT_MESSAGES
     system_msgs = [m for m in messages if m["role"] == "system"]
     non_system = [m for m in messages if m["role"] != "system"]
 
-    if len(non_system) <= limit:
-        return clean_for_api(system_msgs + non_system)
+    msg_limit = config.MAX_CONTEXT_MESSAGES
+    if len(non_system) > msg_limit:
+        non_system = non_system[-msg_limit:]
 
-    overflow = non_system[:-limit]
-    kept = non_system[-limit:]
+    system_tokens = sum(_msg_tokens(m) for m in system_msgs)
+    budget = _MAX_CONTEXT_TOKENS - system_tokens
 
-    summary_parts = []
-    for msg in overflow:
-        role = msg.get("role", "")
-        content = msg.get("content", "") or ""
-        if role == "user" and content:
-            line = content.split("\n")[0][:80]
-            summary_parts.append(f"用户: {line}")
-        elif role == "assistant" and content:
-            line = content.split("\n")[0][:80]
-            summary_parts.append(f"助手: {line}")
+    kept = []
+    used_tokens = 0
+    for msg in reversed(non_system):
+        mt = _msg_tokens(msg)
+        if used_tokens + mt > budget:
+            break
+        kept.insert(0, msg)
+        used_tokens += mt
 
-    if summary_parts:
-        summary_text = (
-            "[以下是更早的对话摘要，供参考]\n"
-            + "\n".join(summary_parts[-8:])
-        )
-        summary_msg = {"role": "system", "content": summary_text}
-        result = system_msgs + [summary_msg] + kept
+    overflow = non_system[:len(non_system) - len(kept)]
+
+    if overflow:
+        summary_parts = []
+        for msg in overflow:
+            role = msg.get("role", "")
+            content = msg.get("content", "") or ""
+            if role == "user" and content:
+                line = content.split("\n")[0][:80]
+                summary_parts.append(f"用户: {line}")
+            elif role == "assistant" and content:
+                line = content.split("\n")[0][:80]
+                summary_parts.append(f"助手: {line}")
+
+        if summary_parts:
+            summary_text = (
+                "[以下是更早的对话摘要，供参考]\n"
+                + "\n".join(summary_parts[-8:])
+            )
+            summary_msg = {"role": "system", "content": summary_text}
+            result = system_msgs + [summary_msg] + kept
+        else:
+            result = system_msgs + kept
     else:
         result = system_msgs + kept
 

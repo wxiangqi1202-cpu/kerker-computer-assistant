@@ -1,5 +1,10 @@
 """
 技能：角色蒸馏 —— 通过自然语言描述或真实人物名，搜索多源资料并深度蒸馏为角色 prompt
+
+资料搜集策略（三层）：
+1. web_search 搜索引擎 — 覆盖面最广，适合任何人物/角色
+2. 百科直取 — Wikipedia/百度百科，结构化信息质量高
+3. 语录搜索 — 名人名言、经典语录，捕捉说话风格
 """
 
 import json
@@ -28,29 +33,127 @@ def _fetch_page(url, max_chars=4000):
 
 
 def _search_persona(name):
-    """多源并发搜索人物/角色资料"""
+    """
+    三层资料搜集策略：
+    1. web_search 搜索引擎（覆盖面广，适用任何人物/虚构角色）
+    2. 百科页面直取（Wikipedia/百度百科，结构化高质量）
+    3. 语录搜索（捕捉说话风格特征）
+    """
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    sources = [
+
+    collected = []
+
+    search_result = _web_search_persona(name)
+    if search_result:
+        collected.append(search_result)
+
+    encyclopedia_urls = [
         f"https://zh.wikipedia.org/wiki/{name}",
         f"https://en.wikipedia.org/wiki/{name}",
         f"https://baike.baidu.com/item/{name}",
+    ]
+
+    quote_queries = [
+        f"{name} 经典语录 名言",
+        f"{name} quotes famous sayings",
+    ]
+    quote_urls = [
         f"https://zh.wikiquote.org/wiki/{name}",
     ]
 
-    collected = []
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = {pool.submit(_fetch_page, url, 2500): url for url in sources}
-        for future in as_completed(futures, timeout=8):
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        encyclopedia_futures = {
+            pool.submit(_fetch_page, url, 3000): f"百科:{url}"
+            for url in encyclopedia_urls
+        }
+        quote_futures = {
+            pool.submit(_fetch_page, url, 2000): f"语录:{url}"
+            for url in quote_urls
+        }
+        quote_search_futures = {
+            pool.submit(_web_search_quotes, q): f"语录搜索:{q}"
+            for q in quote_queries
+        }
+
+        all_futures = {**encyclopedia_futures, **quote_futures, **quote_search_futures}
+
+        encyclopedia_results = []
+        quote_results = []
+
+        for future in as_completed(all_futures, timeout=12):
+            source = all_futures[future]
             try:
                 content = future.result()
-                if content and len(content) > 100:
-                    collected.append(content)
-                if len(collected) >= 2:
-                    break
+                if not content or len(content) < 80:
+                    continue
+                if source.startswith("百科"):
+                    encyclopedia_results.append(content)
+                else:
+                    quote_results.append(content)
             except Exception:
                 continue
 
+    if encyclopedia_results:
+        collected.append(encyclopedia_results[0])
+
+    if quote_results:
+        collected.append(quote_results[0][:2000])
+
     return "\n\n---\n\n".join(collected) if collected else ""
+
+
+def _web_search_persona(name):
+    """通过 web_search 技能搜索人物资料，并抓取最相关的结果"""
+    from skills.web_skill import web_search, web_summary, _is_safe_url
+
+    search_queries = [
+        f"{name} 生平 简介 性格 风格",
+        f"{name} biography personality style",
+    ]
+
+    results_text = []
+    for query in search_queries:
+        result = web_search(query)
+        if result and "未找到" not in result and "出错" not in result:
+            results_text.append(result)
+            break
+
+    if not results_text:
+        return ""
+
+    urls_to_read = []
+    for line in results_text[0].split("\n"):
+        line = line.strip()
+        if line.startswith("http"):
+            urls_to_read.append(line)
+        elif "http" in line:
+            parts = line.split()
+            for part in parts:
+                if part.startswith("http"):
+                    urls_to_read.append(part)
+                    break
+
+    detail = ""
+    for url in urls_to_read[:2]:
+        if _is_safe_url(url):
+            page = web_summary(url)
+            if page and "安全限制" not in page and "失败" not in page and len(page) > 100:
+                detail = page
+                break
+
+    output = results_text[0][:2000]
+    if detail:
+        output += f"\n\n[详细资料]\n{detail[:3000]}"
+    return output
+
+
+def _web_search_quotes(query):
+    """通过 web_search 搜索人物语录"""
+    from skills.web_skill import web_search
+    result = web_search(query)
+    if result and "未找到" not in result and "出错" not in result:
+        return result[:2000]
+    return ""
 
 
 _DISTILL_PROMPT = """\
@@ -93,7 +196,10 @@ def distill_role(name, description=""):
     material = _search_persona(name)
 
     if not material and not description:
-        material = f"没有找到关于 {name} 的公开资料。请根据名称含义和常见认知创造角色。"
+        material = (
+            f"没有找到关于 {name} 的公开资料（搜索引擎和百科均无结果）。"
+            f"请根据名称含义、文化背景和常见认知创造角色。"
+        )
 
     prompt = _DISTILL_PROMPT.format(
         name=name,
@@ -108,7 +214,7 @@ def distill_role(name, description=""):
 
         client = OpenAI(api_key=load_api_key(), base_url=config.BASE_URL)
         response = client.chat.completions.create(
-            model="deepseek-v4-flash",
+            model=config.MODEL,
             messages=[
                 {"role": "system", "content": "你是角色蒸馏专家，只输出 JSON，不要解释。"},
                 {"role": "user", "content": prompt},

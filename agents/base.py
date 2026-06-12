@@ -170,4 +170,12 @@ class SubAgent:
                     "content": result,
                 })
 
-        return messages[-1].get("content", "子智能体达到最大轮次限制")
+        try:
+            summary_resp = await client.chat.completions.create(
+                model=model, messages=messages + [
+                    {"role": "user", "content": "请根据以上工具调用结果，给出最终总结回复。"}
+                ], stream=False,
+            )
+            return summary_resp.choices[0].message.content or "子智能体达到最大轮次限制"
+        except Exception:
+            return messages[-1].get("content", "子智能体达到最大轮次限制")

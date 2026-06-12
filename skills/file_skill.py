@@ -27,6 +27,8 @@ def _is_sensitive(path):
 
 def read_file(path):
     path = os.path.expanduser(path)
+    if _is_sensitive(path):
+        return f"安全限制: 不允许读取敏感路径 {path}"
     if not os.path.isfile(path):
         return f"文件不存在: {path}"
     try:

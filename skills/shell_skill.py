@@ -31,8 +31,16 @@ def _is_dangerous(command):
     return False
 
 
+def _is_interactive():
+    """检测当前是否在交互式终端中（非 tool-call 自动循环）"""
+    import sys
+    return sys.stdin.isatty()
+
+
 def run_shell(command):
     if _is_dangerous(command):
+        if not _is_interactive():
+            return f"安全限制: 检测到危险命令，非交互环境下已拒绝执行: {command}"
         print(f"\n  ⚠ 危险命令检测: {command}")
         try:
             confirm = input("  确认执行? (y/N): ").strip().lower()

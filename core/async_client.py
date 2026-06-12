@@ -4,10 +4,31 @@
 
 import os
 import asyncio
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, APIStatusError, APIConnectionError, APITimeoutError
 from core import config
 from core.credentials import load_api_key
 import skills
+
+
+_API_MAX_RETRIES = 3
+_API_RETRY_BASE_DELAY = 1.0
+
+
+async def _api_call_with_retry(client, kwargs):
+    """带指数退避重试的 API 调用"""
+    last_error = None
+    for attempt in range(_API_MAX_RETRIES):
+        try:
+            return await client.chat.completions.create(**kwargs)
+        except (APIStatusError, APIConnectionError, APITimeoutError) as err:
+            last_error = err
+            status = getattr(err, "status_code", 0)
+            if isinstance(err, APIStatusError) and status in (400, 401, 403, 404):
+                raise
+            if attempt < _API_MAX_RETRIES - 1:
+                delay = _API_RETRY_BASE_DELAY * (2 ** attempt)
+                await asyncio.sleep(delay)
+    raise last_error
 
 
 def create_client():
@@ -264,7 +285,7 @@ async def send(client, messages):
             break
         _sync_system_messages(messages)
         kwargs = _build_kwargs(messages)
-        response = await client.chat.completions.create(**kwargs)
+        response = await _api_call_with_retry(client, kwargs)
 
         if config.STREAM:
             result = yield_result = None

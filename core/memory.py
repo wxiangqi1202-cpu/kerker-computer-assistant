@@ -8,7 +8,7 @@
 
 import os
 import json
-import time
+import uuid
 from datetime import datetime
 from core import config
 
@@ -68,7 +68,7 @@ class SemanticMemory:
                 return entry
 
         entry = {
-            "id": int(time.time() * 1000),
+            "id": uuid.uuid4().hex,
             "content": content,
             "source": source,
             "tags": tags or [],
@@ -204,7 +204,7 @@ class EpisodicMemory:
             last_reply = last.split("\n")[0][:80]
 
         episode = {
-            "id": int(time.time() * 1000),
+            "id": uuid.uuid4().hex,
             "timestamp": datetime.now().isoformat(),
             "summary": summary,
             "last_reply": last_reply,

@@ -5,9 +5,36 @@
 """
 
 import subprocess
+import ipaddress
+from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 from skills import register
+
+
+_BLOCKED_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "[::1]", "metadata.google.internal"}
+
+
+def _is_safe_url(url):
+    """检查 URL 是否安全，阻止 SSRF 攻击"""
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        if not host:
+            return False
+        if host in _BLOCKED_HOSTS:
+            return False
+        if parsed.scheme not in ("http", "https"):
+            return False
+        try:
+            addr = ipaddress.ip_address(host)
+            if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+                return False
+        except ValueError:
+            pass
+        return True
+    except Exception:
+        return False
 
 
 def _bing_search(query, max_results=6):
@@ -97,6 +124,8 @@ def web_search(query):
 
 def web_summary(url):
     """获取指定 URL 网页的文本内容"""
+    if not _is_safe_url(url):
+        return f"安全限制: 不允许访问该 URL（内网/受限地址）: {url}"
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
         resp = requests.get(url, headers=headers, timeout=8)
