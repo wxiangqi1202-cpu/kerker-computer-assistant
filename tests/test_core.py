@@ -111,14 +111,23 @@ class TestMemoryConflict(unittest.TestCase):
     def test_identical_content_is_conflict(self):
         self.assertTrue(self.mem._is_conflict("用户名: alice", "用户名: alice"))
 
-    def test_same_topic_different_value(self):
+    def test_same_topic_different_value_chinese(self):
+        self.assertTrue(self.mem._is_conflict(
+            "用户喜欢的编程语言是Python",
+            "用户喜欢的编程语言是Rust"
+        ))
+
+    def test_same_topic_with_spaces(self):
         self.assertTrue(self.mem._is_conflict(
             "喜欢 编程 语言 是 Python 非常 好用",
             "喜欢 编程 语言 是 Rust 非常 好用"
         ))
 
     def test_unrelated_content_no_conflict(self):
-        self.assertFalse(self.mem._is_conflict("今天天气很好", "Python 是编程语言"))
+        self.assertFalse(self.mem._is_conflict("今天天气很好", "Python是编程语言"))
+
+    def test_short_similar_chinese(self):
+        self.assertTrue(self.mem._is_conflict("用户住在北京", "用户住在上海"))
 
 
 class TestFileSkillSecurity(unittest.TestCase):

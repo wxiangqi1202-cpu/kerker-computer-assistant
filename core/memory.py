@@ -131,13 +131,31 @@ class SemanticMemory:
         self._save()
 
     def _is_conflict(self, new_content, old_content):
-        """简单冲突检测：两条记忆讲的是同一件事但值不同"""
-        new_words = set(new_content.lower().replace("：", " ").replace(":", " ").split())
-        old_words = set(old_content.lower().replace("：", " ").replace(":", " ").split())
-        if not new_words or not old_words:
-            return False
-        overlap = len(new_words & old_words) / max(len(new_words), len(old_words))
-        return overlap >= 0.6
+        """
+        冲突检测：判断两条记忆是否描述同一件事。
+        使用双重策略：
+        1. 词级重叠（适合英文和带空格的中文）
+        2. 字符 bigram 重叠（适合无空格的中文）
+        任一策略判定为冲突即返回 True。
+        """
+        new_lower = new_content.lower().replace("：", " ").replace(":", " ")
+        old_lower = old_content.lower().replace("：", " ").replace(":", " ")
+
+        new_words = set(new_lower.split())
+        old_words = set(old_lower.split())
+        if new_words and old_words:
+            word_overlap = len(new_words & old_words) / max(len(new_words), len(old_words))
+            if word_overlap >= 0.6:
+                return True
+
+        new_bigrams = set(zip(new_lower, new_lower[1:]))
+        old_bigrams = set(zip(old_lower, old_lower[1:]))
+        if new_bigrams and old_bigrams:
+            bigram_overlap = len(new_bigrams & old_bigrams) / max(len(new_bigrams), len(old_bigrams))
+            if bigram_overlap >= 0.6:
+                return True
+
+        return False
 
     def format_for_prompt(self, limit=8):
         """格式化为 system prompt 注入文本"""
