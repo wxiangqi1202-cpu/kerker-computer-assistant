@@ -1,5 +1,13 @@
 """
-渲染层 —— Markdown 渲染 + 任务面板 + spinner 联动
+渲染层 —— Markdown 渲染 + ProgressTracker 联动 + spinner 控制
+
+统一事件流处理：
+- route: 路由决策通知
+- thinking: 模型推理中
+- tool/tool_exec: 工具调用开始
+- tool_result: 工具调用结果
+- text: 流式文本
+- done: 完成
 """
 
 import sys
@@ -86,8 +94,11 @@ async def render(event_stream, spinner=None, taskboard=None):
                 stats = _format_stats(usage, timer)
 
                 if taskboard and taskboard.is_finishing:
-                    while taskboard.is_visible:
-                        await asyncio.sleep(0.08)
+                    wait_start = asyncio.get_event_loop().time()
+                    while taskboard.is_visible and taskboard.is_finishing:
+                        await asyncio.sleep(0.06)
+                        if asyncio.get_event_loop().time() - wait_start > 2.0:
+                            break
 
                 spinner.stop(final_message=stats)
 
@@ -106,10 +117,12 @@ async def render(event_stream, spinner=None, taskboard=None):
         if cancel_task:
             cancel_task.cancel()
         import agents
+        from core.progress import get_tracker
         if spinner.interrupted:
             if taskboard:
                 taskboard.clear()
             spinner.stop()
+            get_tracker().reset()
             agents.clear_plan()
             sys.stdout.write(f"\n  \033[2m⏹ 已中断 (ESC)\033[0m\n\n")
             sys.stdout.flush()

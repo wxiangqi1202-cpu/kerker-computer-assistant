@@ -1,11 +1,12 @@
 """
-子智能体系统 v2 —— 注册表 + 自动路由 + 共享上下文 + 任务面板
+子智能体系统 v3 —— 注册表 + 自动路由 + ProgressTracker 统一进度
 
-核心改进：
-- AgentContext 共享工作记忆，planner 结果注入后续 agent
-- 步骤-Agent 绑定，planner 指定谁执行
-- 自动路由层判定是否需要规划
-- agent 执行结果自动摘要写入共享记忆
+核心改进（v3）：
+- 废弃 AgentContext 的直接 taskboard 操作
+- 所有进度通过 ProgressTracker 统一管理
+- planner 结果注入 ProgressTracker.set_plan()
+- agent 执行结果通过 ProgressTracker.agent_done() 上报
+- 消除 _sync_taskboard 导致的状态冲突
 """
 
 import json
@@ -14,22 +15,15 @@ import pkgutil
 
 import skills as skills_module
 from agents.base import SubAgent
-from agents.context import get_context, reset_context
 
 _registry = {}
 _active_spinner = None
-_active_taskboard = None
 _planner_used = False
 
 
 def set_spinner(spinner):
     global _active_spinner
     _active_spinner = spinner
-
-
-def set_taskboard(taskboard):
-    global _active_taskboard
-    _active_taskboard = taskboard
 
 
 def register_agent(agent_class):
@@ -81,7 +75,7 @@ def _extract_first_json(text):
         if ch == '\\':
             escape = True
             continue
-        if ch == '"' and not escape:
+        if ch == '"':
             in_string = not in_string
             continue
         if in_string:
@@ -131,15 +125,6 @@ def _summarize_result(text, max_len=200):
     return first_line
 
 
-def _sync_taskboard():
-    """将 AgentContext 的步骤状态完整同步到 taskboard（全量替换，非追加）"""
-    if not _active_taskboard:
-        return
-    ctx = get_context()
-    items = ctx.to_taskboard_items()
-    _active_taskboard.replace_all(items)
-
-
 def _register_as_skill(agent):
     def _on_status(text):
         if _active_spinner:
@@ -147,7 +132,8 @@ def _register_as_skill(agent):
 
     async def _run_agent(task):
         global _planner_used
-        ctx = get_context()
+        from core.progress import get_tracker
+        tracker = get_tracker()
 
         if agent.name == "planner" and _planner_used:
             return "规划已完成，请根据现有规划继续执行。"
@@ -155,18 +141,12 @@ def _register_as_skill(agent):
         if _active_spinner:
             _active_spinner.update_sub(agent.name, [f"{agent.name} 工作中..."])
 
-        matched_step = None
-
         if agent.name == "planner":
-            ctx.set_original_task(task)
+            tracker.set_original_task(task)
             _planner_used = True
         else:
-            matched_step_obj = ctx.advance_step(agent_name=agent.name)
-            if matched_step_obj:
-                matched_step = matched_step_obj.step
-                _sync_taskboard()
-
-            context_prompt = ctx.build_context_prompt(agent_name=agent.name)
+            tracker.agent_start(agent.name)
+            context_prompt = tracker.build_context_prompt(agent_name=agent.name)
             if context_prompt:
                 task = f"{context_prompt}\n\n[当前任务] {task}"
 
@@ -176,24 +156,19 @@ def _register_as_skill(agent):
             if agent.name == "planner":
                 steps = _parse_planner_result(result)
                 if steps:
-                    ctx.set_plan(steps)
-                    _sync_taskboard()
+                    tracker.set_plan(steps)
             else:
                 summary = _summarize_result(result)
-                ctx.add_memory(agent.name, task[:200], summary)
-
-                if matched_step:
-                    ctx.complete_step(matched_step, summary=summary)
-                    _sync_taskboard()
+                tracker.agent_done(agent.name, summary=summary)
+                tracker.add_memory(agent.name, task[:200], summary)
 
         except Exception as err:
             error_msg = f"[{agent.name}] 执行失败: {str(err)[:150]}"
 
-            if matched_step:
-                ctx.fail_step(matched_step, error=str(err)[:100])
-                _sync_taskboard()
+            if agent.name != "planner":
+                tracker.agent_error(agent.name, error=str(err)[:100])
 
-            ctx.add_memory(agent.name, task[:200], error_msg)
+            tracker.add_memory(agent.name, task[:200], error_msg)
             result = error_msg
         finally:
             if _active_spinner:
@@ -221,7 +196,8 @@ def clear_plan():
     """清除规划状态，每轮对话结束后调用"""
     global _planner_used
     _planner_used = False
-    reset_context()
+    from core.progress import get_tracker
+    get_tracker().reset()
 
 
 def _auto_load():

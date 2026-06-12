@@ -1,7 +1,11 @@
 """
-任务面板 —— 实时显示任务进度
-与 spinner 共享终端空间。
-running 呼吸灯，全部完成时收束聚焦动画。
+任务面板 —— 纯渲染器，从 ProgressTracker 读取状态快照
+
+设计原则：
+1. TaskBoard 不持有业务状态，只负责渲染
+2. 从 ProgressTracker 获取快照后渲染为 ANSI 行
+3. 结束动画仅在 ProgressTracker.is_finished 时触发
+4. 动画期间状态已锁定，不会被新数据打断
 """
 
 import threading
@@ -12,20 +16,30 @@ _BREATH_COLORS = [
     252, 250, 247, 244, 242, 240, 238, 236,
 ]
 
-_T_HOLD = 0.5
-_T_CONVERGE = 0.7
-_T_FLASH = 0.25
-_T_FADE = 0.35
+_T_HOLD = 0.4
+_T_CONVERGE = 0.6
+_T_FLASH = 0.2
+_T_FADE = 0.3
 _T_TOTAL = _T_HOLD + _T_CONVERGE + _T_FLASH + _T_FADE
 
 
 class TaskBoard:
+    """
+    任务面板渲染器。
+    由 ProgressTracker 驱动，自身不管理业务状态。
+    """
+
     def __init__(self):
-        self._tasks = []
         self._lock = threading.Lock()
-        self._visible = False
-        self._all_done_at = 0
+        self._tracker = None
+        self._finish_anim_start = 0.0
         self._finishing = False
+        self._final_count = 0
+        self._final_snapshot = []
+        self._cleared = False
+
+    def set_tracker(self, tracker):
+        self._tracker = tracker
 
     @property
     def is_finishing(self):
@@ -34,109 +48,98 @@ class TaskBoard:
 
     @property
     def is_visible(self):
+        if not self._tracker:
+            return False
         with self._lock:
-            return self._visible
-
-    def add_or_update(self, name, status):
-        with self._lock:
-            for task in self._tasks:
-                if task["name"] == name:
-                    if task["status"] != status:
-                        task["status"] = status
-                        if status not in ("done", "error"):
-                            self._all_done_at = 0
-                            self._finishing = False
-                    self._visible = True
-                    self._check_done()
-                    return
-            self._tasks.append({"name": name, "status": status})
-            self._visible = True
-            self._all_done_at = 0
-            self._finishing = False
-            self._check_done()
+            if self._finishing:
+                return True
+        return self._tracker.is_visible
 
     def clear(self):
         with self._lock:
-            self._tasks.clear()
-            self._visible = False
-            self._all_done_at = 0
+            self._finish_anim_start = 0.0
             self._finishing = False
-
-    def replace_all(self, items):
-        with self._lock:
-            self._tasks = []
-            seen = set()
-            for name, status in items:
-                if name in seen:
-                    continue
-                seen.add(name)
-                self._tasks.append({"name": name, "status": status})
-            self._visible = bool(self._tasks)
-            self._check_done()
-
-
-    def _check_done(self):
-        if not self._tasks:
-            return
-        if all(t["status"] in ("done", "error") for t in self._tasks):
-            if self._all_done_at == 0:
-                self._all_done_at = time.time()
-                self._finishing = True
-        else:
-            self._all_done_at = 0
-            self._finishing = False
+            self._final_count = 0
+            self._final_snapshot = []
+            self._cleared = True
 
     def get_lines(self, tick=0):
-        with self._lock:
-            if not self._visible or not self._tasks:
-                return []
-            if self._all_done_at > 0:
-                return self._finish_anim(tick)
-            return self._render(tick)
+        if not self._tracker:
+            return []
 
-    def _render(self, tick):
+        with self._lock:
+            if self._cleared:
+                return []
+
+            if self._finishing:
+                return self._render_finish_anim(tick)
+
+            if self._tracker.is_finished and not self._finishing:
+                snapshot = self._tracker.get_snapshot()
+                if snapshot:
+                    self._finishing = True
+                    self._finish_anim_start = time.time()
+                    self._final_count = len(snapshot)
+                    self._final_snapshot = snapshot
+                    return self._render_finish_anim(tick)
+                return []
+
+        if not self._tracker.is_visible:
+            return []
+
+        snapshot = self._tracker.get_snapshot()
+        if not snapshot:
+            return []
+
+        return self._render_steps(snapshot, tick)
+
+    def _render_steps(self, snapshot, tick):
+        """渲染步骤列表"""
         lines = []
-        for t in self._tasks:
-            s, n = t["status"], t["name"]
-            if s == "running":
+        for name, status in snapshot:
+            if status == "running":
                 c = _BREATH_COLORS[tick % len(_BREATH_COLORS)]
-                lines.append(f"    \033[38;5;{c}m›\033[0m \033[97m{n}\033[0m")
-            elif s == "done":
-                lines.append(f"    \033[32m✓\033[0m \033[90m{n}\033[0m")
-            elif s == "error":
-                lines.append(f"    \033[31m✗\033[0m \033[90m{n}\033[0m")
+                lines.append(f"    \033[38;5;{c}m›\033[0m \033[97m{name}\033[0m")
+            elif status == "done":
+                lines.append(f"    \033[32m✓\033[0m \033[90m{name}\033[0m")
+            elif status == "error":
+                lines.append(f"    \033[31m✗\033[0m \033[90m{name}\033[0m")
             else:
-                lines.append(f"    \033[90m·\033[0m \033[90m{n}\033[0m")
+                lines.append(f"    \033[90m○\033[0m \033[90m{name}\033[0m")
         return lines
 
-    def _finish_anim(self, tick):
-        elapsed = time.time() - self._all_done_at
-        count = len(self._tasks)
+    def _render_finish_anim(self, tick):
+        """结束收束动画：hold → converge → flash → fade"""
+        elapsed = time.time() - self._finish_anim_start
+        count = self._final_count
+        snapshot = self._final_snapshot
+
+        if count == 0:
+            self._finishing = False
+            return []
 
         if elapsed < _T_HOLD:
-            return self._render(tick)
+            return self._render_steps(snapshot, tick)
 
         t2 = _T_HOLD + _T_CONVERGE
         if elapsed < t2:
-            p = (elapsed - _T_HOLD) / _T_CONVERGE
-            show = max(1, round(count * (1 - p)))
+            progress = (elapsed - _T_HOLD) / _T_CONVERGE
+            show = max(1, round(count * (1 - progress)))
+            if show <= 1:
+                g = int(34 + progress * 6)
+                return [f"    \033[38;5;{g}m✓ {count} 项已完成\033[0m"]
             lines = []
             for i in range(show):
-                fade = int(232 + (1 - p) * 23)
-                name = self._tasks[i]["name"]
+                fade = int(232 + (1 - progress) * 23)
+                name = snapshot[i][0] if i < len(snapshot) else ""
                 lines.append(f"    \033[38;5;{fade}m✓ {name}\033[0m")
-            if show == 1:
-                g = int(34 + p * 6)
-                lines = [f"    \033[38;5;{g}m✓ {count} 项已完成\033[0m"]
             return lines
 
         t3 = t2 + _T_FLASH
         if elapsed < t3:
             fp = (elapsed - t2) / _T_FLASH
-            if fp < 0.35:
-                return [f"    \033[1;97m✓ {count} 项已完成\033[0m"]
-            else:
-                return [f"    \033[1;32m✓ {count} 项已完成\033[0m"]
+            color = "1;97m" if fp < 0.4 else "1;32m"
+            return [f"    \033[{color}✓ {count} 项已完成\033[0m"]
 
         t4 = t3 + _T_FADE
         if elapsed < t4:
@@ -144,8 +147,6 @@ class TaskBoard:
             c = int(232 + (1 - fp) * 23)
             return [f"    \033[38;5;{c}m✓ {count} 项已完成\033[0m"]
 
-        self._tasks.clear()
-        self._visible = False
-        self._all_done_at = 0
         self._finishing = False
+        self._final_snapshot = []
         return []

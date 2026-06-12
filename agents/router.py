@@ -84,6 +84,14 @@ _CONTINUE_PATTERNS = [
 ]
 
 
+def _is_step_pending(step):
+    """兼容 ProgressStep (enum) 和 PlanStep (string) 的 pending 判断"""
+    status = getattr(step, "status", "")
+    if hasattr(status, "value"):
+        return status.value == "pending"
+    return status == "pending"
+
+
 _INTENT_PLAN_PATTERNS = [
     re.compile(r"(创建|生成|打造|蒸馏|新建).{0,12}(角色|人设|persona|人格)", _I),
     re.compile(r"(角色|人设).{0,4}(创建|生成|蒸馏|定制)", _I),
@@ -158,7 +166,8 @@ def route(user_input, available_agents=None, context=None):
         return RouteDecision(RouteDecision.PLAN, reason="继承上轮规划")
 
     if context and context.has_plan:
-        pending = [s for s in context.plan_steps if s.status == "pending"]
+        steps = context.plan_steps
+        pending = [s for s in steps if _is_step_pending(s)]
         if pending:
             return RouteDecision(RouteDecision.PLAN, reason=f"上轮规划有 {len(pending)} 步未完成")
 

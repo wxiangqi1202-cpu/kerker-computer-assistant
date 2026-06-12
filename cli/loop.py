@@ -144,11 +144,15 @@ async def _async_main():
 
     session = create_session()
     api_client = create_client()
+
+    from core.progress import get_tracker
+    tracker = get_tracker()
+
     taskboard = TaskBoard()
+    taskboard.set_tracker(tracker)
     spinner = Spinner()
     spinner.set_taskboard(taskboard)
     agents.set_spinner(spinner)
-    agents.set_taskboard(taskboard)
     messages = build_system_messages()
 
     from core.env_probe import format_env_prompt

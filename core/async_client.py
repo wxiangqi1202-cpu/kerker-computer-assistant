@@ -81,7 +81,7 @@ def _try_auto_route(messages):
     """
     from agents.router import route, RouteDecision
     from agents import get_all_agents
-    from agents.context import get_context
+    from core.progress import get_tracker
 
     user_msgs = [m for m in messages if m.get("role") == "user"]
     if not user_msgs:
@@ -89,8 +89,8 @@ def _try_auto_route(messages):
 
     last_user = user_msgs[-1].get("content", "")
     available = set(get_all_agents().keys())
-    ctx = get_context()
-    decision = route(last_user, available, context=ctx)
+    tracker = get_tracker()
+    decision = route(last_user, available, context=tracker)
 
     if decision.action == RouteDecision.PLAN:
         return decision, [{
@@ -200,70 +200,15 @@ def _clean_route_messages(messages):
             i += 1
 
 
-def _track_tool_start(tool_name):
-    """工具开始执行时，在 taskboard 上显示为 running（第二个工具起才显示）"""
-    from agents import _active_taskboard
-    if not _active_taskboard:
-        return
-    display = _tool_display_name(tool_name)
-    _active_taskboard.add_or_update(display, "running")
-
-
-def _track_tool_done(tool_name):
-    """工具执行完毕，标记为 done"""
-    from agents import _active_taskboard
-    if _active_taskboard:
-        display = _tool_display_name(tool_name)
-        _active_taskboard.add_or_update(display, "done")
-
-
-def _advance_next_step():
-    """有 plan 时推进下一个 pending 步骤"""
-    from agents.context import get_context
-    from agents import _sync_taskboard
-    ctx = get_context()
-    if not ctx.has_plan:
-        return
-    step = ctx.advance_step()
-    if step:
-        _sync_taskboard()
-
-
-def _complete_current_step():
-    """有 plan 时将当前 running 步骤标记为 done"""
-    from agents.context import get_context
-    from agents import _sync_taskboard
-    ctx = get_context()
-    if not ctx.has_plan:
-        return
-    for s in ctx.plan_steps:
-        if s.status == "running":
-            ctx.complete_step(s.step, summary="已完成")
-            _sync_taskboard()
-            return
-
-
-def _complete_remaining_steps():
-    """最终输出前，将所有剩余 pending/running 步骤标记为 done"""
-    from agents.context import get_context
-    from agents import _sync_taskboard
-    ctx = get_context()
-    if not ctx.has_plan:
-        return
-    changed = False
-    for s in ctx.plan_steps:
-        if s.status in ("pending", "running"):
-            ctx.complete_step(s.step, summary="已完成")
-            changed = True
-    if changed:
-        _sync_taskboard()
-
-
 async def send(client, messages):
     """
     异步发送消息并自动处理工具调用循环。
-    每次调用前清理上一轮残留的路由指令。
+    通过 ProgressTracker 统一追踪所有工具和智能体执行进度。
     """
+    from core.progress import get_tracker
+
+    tracker = get_tracker()
+
     _clean_route_messages(messages)
 
     if config.AUTO_ROUTE:
@@ -274,13 +219,12 @@ async def send(client, messages):
             for msg in route_msgs:
                 messages.append(msg)
 
-    _other_tool_count = 0
-    _pending_first_tool = None
     _max_rounds = 20
     _round = 0
     while True:
         _round += 1
         if _round > _max_rounds:
+            tracker.finish_all()
             yield {"type": "done", "content": "达到最大工具调用轮次限制，已停止。", "assistant_msg": {"role": "assistant", "content": "达到最大工具调用轮次限制，已停止。"}, "usage": None}
             break
         _sync_system_messages(messages)
@@ -304,47 +248,30 @@ async def send(client, messages):
                     yield event
 
         if not result or not result["tool_calls"]:
-            _complete_remaining_steps()
+            tracker.finish_all()
             break
 
         messages.append(result["assistant_msg"])
 
         tool_calls = result["tool_calls"]
-
-        from agents.context import get_context as _get_ctx
-
         agent_calls = [tc for tc in tool_calls if tc["name"].startswith("agent_")]
         other_calls = [tc for tc in tool_calls if not tc["name"].startswith("agent_")]
 
         for tc in agent_calls:
+            agent_name = tc["name"].replace("agent_", "", 1)
+            tracker.agent_start(agent_name)
             yield {"type": "tool_exec", "name": tc["name"], "args": tc["args"]}
             tool_result = await skills.async_call(tc["name"], tc["args"])
+            tracker.agent_done(agent_name, summary=tool_result[:100] if tool_result else "")
             yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})
 
         for tc in other_calls:
-            _other_tool_count += 1
-            has_plan = _get_ctx().has_plan
-            if has_plan:
-                _advance_next_step()
-
-            if _other_tool_count == 1 and not has_plan:
-                _pending_first_tool = tc["name"]
-            elif _other_tool_count == 2 and _pending_first_tool and not has_plan:
-                _track_tool_done(_pending_first_tool)
-                _pending_first_tool = None
-                _track_tool_start(tc["name"])
-            elif _other_tool_count > 2 and not has_plan:
-                _track_tool_start(tc["name"])
-
+            display_name = _tool_display_name(tc["name"])
+            tracker.tool_start(display_name)
             yield {"type": "tool_exec", "name": tc["name"], "args": tc["args"]}
             tool_result = await skills.async_call(tc["name"], tc["args"])
-
-            if _other_tool_count >= 2 and not has_plan:
-                _track_tool_done(tc["name"])
-            if has_plan:
-                _complete_current_step()
-
+            tracker.tool_done(display_name)
             yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})
 
