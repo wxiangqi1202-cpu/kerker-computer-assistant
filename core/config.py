@@ -33,9 +33,17 @@ class Config:
     )
 
     TOOL_DIRECTIVE = (
-        "你拥有多种工具。当用户询问需要实时信息的问题（时间、天气、位置、文件内容、网页等）时，"
+        "你拥有多种工具。当用户询问需要实时信息的问题时，"
         "必须主动调用相应工具获取信息后再回答，不要猜测或询问用户。"
-        "例如：问时间→调 get_current_time，问天气→调 get_weather，问文件→调 read_file。"
+        "工具选择指南：\n"
+        "- 需要搜索/查询/最新信息 → 调 web_search（只需关键词，不需要 URL）\n"
+        "- 需要深入了解某话题 → 调 web_search_and_read（搜索+阅读详情）\n"
+        "- 已知具体 URL 要读内容 → 调 web_summary\n"
+        "- 问时间 → 调 get_current_time\n"
+        "- 问天气 → 调 get_weather\n"
+        "- 操作文件 → 调 read_file / write_file\n"
+        "- 执行命令 → 调 run_shell\n"
+        "重要：需要搜索信息时必须用 web_search，不要自己编造 URL。"
     )
 
     EXPLORE_DIRECTIVE = (

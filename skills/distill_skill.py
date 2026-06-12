@@ -12,7 +12,7 @@ def _fetch_page(url, max_chars=4000):
     """抓取网页文本"""
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
-        resp = requests.get(url, headers=headers, timeout=10)
+        resp = requests.get(url, headers=headers, timeout=6)
         if resp.status_code != 200:
             return ""
         resp.encoding = resp.apparent_encoding
@@ -28,7 +28,8 @@ def _fetch_page(url, max_chars=4000):
 
 
 def _search_persona(name):
-    """多源搜索人物/角色的公开资料，尽可能收集多维度信息"""
+    """多源并发搜索人物/角色资料"""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     sources = [
         f"https://zh.wikipedia.org/wiki/{name}",
         f"https://en.wikipedia.org/wiki/{name}",
@@ -37,12 +38,17 @@ def _search_persona(name):
     ]
 
     collected = []
-    for url in sources:
-        content = _fetch_page(url, max_chars=3000)
-        if content and len(content) > 100:
-            collected.append(content)
-        if len(collected) >= 3:
-            break
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {pool.submit(_fetch_page, url, 2500): url for url in sources}
+        for future in as_completed(futures, timeout=8):
+            try:
+                content = future.result()
+                if content and len(content) > 100:
+                    collected.append(content)
+                if len(collected) >= 2:
+                    break
+            except Exception:
+                continue
 
     return "\n\n---\n\n".join(collected) if collected else ""
 

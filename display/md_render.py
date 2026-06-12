@@ -196,7 +196,7 @@ def render_blocks(blocks, width=None):
 
         elif btype == "paragraph":
             text = _render_inline(block["text"])
-            parts.append(f"{indent}{text}\n")
+            parts.append(f"{indent}{text}")
 
         elif btype == "code":
             parts.append(_render_code_block(block, indent, content_width))
@@ -215,7 +215,7 @@ def render_blocks(blocks, width=None):
 
         elif btype == "hr":
             hw = t["hr_width"]
-            parts.append(f"{indent}{t['hr_style']}{t['hr_char'] * hw}{RESET}\n")
+            parts.append(f"{indent}{t['hr_style']}{t['hr_char'] * hw}{RESET}")
 
     return t["block_gap"].join(parts)
 
@@ -230,11 +230,9 @@ def _render_heading(block, indent):
     if level == 1:
         hw = min(_visible_width(text) + 4, 50)
         line = f"{t['hr_style']}{t['hr_char'] * hw}{RESET}"
-        return f"\n{indent}{style}{text}{RESET}\n{indent}{line}\n"
-    elif level == 2:
-        return f"\n{indent}{style}{text}{RESET}\n"
+        return f"{indent}{style}{text}{RESET}\n{indent}{line}"
     else:
-        return f"{indent}{style}{text}{RESET}\n"
+        return f"{indent}{style}{text}{RESET}"
 
 
 def _render_code_block(block, indent, content_width):
@@ -269,7 +267,7 @@ def _render_code_block(block, indent, content_width):
     buf = label
     for cl in code_lines:
         buf += f"{code_indent}{cl}\n"
-    return buf
+    return buf.rstrip("\n")
 
 
 def _render_table(block, indent):
@@ -361,7 +359,7 @@ def _render_table(block, indent):
                 buf += sep
         buf += "\n"
 
-    return buf
+    return buf.rstrip("\n")
 
 
 def _render_ul(block, indent):
@@ -377,7 +375,7 @@ def _render_ul(block, indent):
             buf += f"{prefix}{bullet_style}{bullet_char}{RESET} {text}\n"
         else:
             buf += f"{prefix}{bullet_char} {text}\n"
-    return buf
+    return buf.rstrip("\n")
 
 
 def _render_ol(block, indent):
@@ -393,7 +391,7 @@ def _render_ol(block, indent):
             buf += f"{prefix}{num_style}{num}.{RESET} {text}\n"
         else:
             buf += f"{prefix}{num}. {text}\n"
-    return buf
+    return buf.rstrip("\n")
 
 
 def _render_quote(block, indent):
@@ -407,7 +405,7 @@ def _render_quote(block, indent):
         bar = f"{bar_style}{bar_char}{RESET}" if bar_style else bar_char
         txt = f"{text_style}{line}{RESET}" if text_style else line
         buf += f"{indent}{bar} {txt}\n"
-    return buf
+    return buf.rstrip("\n")
 
 
 # ── 公开 API ─────────────────────────────

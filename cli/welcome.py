@@ -112,7 +112,7 @@ _INFO_TEMPLATE = (
 def _print_final_logo(ctx):
     """输出最终稳定的 logo + 配置信息"""
     for i, line in enumerate(_LOGO_LINES):
-        sys.stdout.write(f"\033[{_LOGO_COLORS[i]}m  {line}\033[0m\033[K\n")
+        sys.stdout.write(f"  \033[{_LOGO_COLORS[i]}m{line}\033[0m\033[K\n")
     sys.stdout.write(f"  \033[90mComputational Agent Framework  v{ctx['version']}\033[0m\033[K\n\n")
     sys.stdout.write(_INFO_TEMPLATE.format(**ctx))
 

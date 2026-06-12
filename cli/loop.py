@@ -171,7 +171,7 @@ async def _async_main():
                 messages = ctx["messages"]
                 api_client = ctx["api_client"]
                 continue
-            _console.print(f"  [red]未知命令: {user_input.split()[0]}[/red]")
+            _console.print(f"   [red]未知命令: {user_input.split()[0]}[/red]")
             _console.print("  [dim]输入 /help 查看可用命令[/dim]")
             continue
 
@@ -191,7 +191,7 @@ async def _async_main():
         )
 
         try:
-            msg_snapshot = len(messages)
+            messages_backup = list(messages)
             spinner.update(tips=CONNECTING_TIPS)
             event_stream = send(api_client, messages)
             reply, assistant_msg = await render(event_stream, spinner=spinner, taskboard=taskboard)
@@ -200,18 +200,20 @@ async def _async_main():
                 messages.append(assistant_msg)
             elif reply:
                 messages.append({"role": "assistant", "content": reply})
-            else:
-                messages.pop()
             ctx["messages"] = messages
 
         except asyncio.CancelledError:
             spinner.stop()
             taskboard.clear()
-            del messages[msg_snapshot:]
+            agents.clear_plan()
+            messages.clear()
+            messages.extend(messages_backup)
         except Exception as error:
             spinner.stop()
             taskboard.clear()
-            del messages[msg_snapshot:]
+            agents.clear_plan()
+            messages.clear()
+            messages.extend(messages_backup)
             err_str = str(error)
             if "api_key" in err_str.lower() or "auth" in err_str.lower() or "401" in err_str:
                 _console.print("\n  [red]API Key 无效或已过期，请运行 /config 重新配置[/red]")
@@ -220,10 +222,10 @@ async def _async_main():
             elif "rate" in err_str.lower() or "429" in err_str:
                 _console.print("\n  [red]请求过于频繁，请稍后再试[/red]")
             elif "model" in err_str.lower() and ("not found" in err_str.lower() or "不存在" in err_str):
-                _console.print(f"\n  [red]模型 {config.MODEL} 不可用，请用 /model 切换[/red]")
+                _console.print(f"\n   [red]模型 {config.MODEL} 不可用，请用 /model 切换[/red]")
             else:
                 short = err_str[:120] + "..." if len(err_str) > 120 else err_str
-                _console.print(f"\n  [red]出错: {short}[/red]")
+                _console.print(f"\n   [red]出错: {short}[/red]")
                 _console.print("  [dim]如果持续出错，试试 /clear 清空对话或 /fast 切换模式[/dim]")
 
 

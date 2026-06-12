@@ -58,8 +58,8 @@ BUILTIN_THEMES = {
 
         "paragraph": "",
 
-        "indent": "   ",
-        "block_gap": "\n",
+        "indent": "  ",
+        "block_gap": "\n\n",
     },
 
     "warm": {
@@ -102,8 +102,8 @@ BUILTIN_THEMES = {
 
         "paragraph": "",
 
-        "indent": "   ",
-        "block_gap": "\n",
+        "indent": "  ",
+        "block_gap": "\n\n",
     },
 
     "plain": {
@@ -146,8 +146,8 @@ BUILTIN_THEMES = {
 
         "paragraph": "",
 
-        "indent": "   ",
-        "block_gap": "\n",
+        "indent": "  ",
+        "block_gap": "\n\n",
     },
 }
 

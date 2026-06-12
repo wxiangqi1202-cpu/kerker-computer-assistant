@@ -41,7 +41,11 @@ class TaskBoard:
         with self._lock:
             for task in self._tasks:
                 if task["name"] == name:
-                    task["status"] = status
+                    if task["status"] != status:
+                        task["status"] = status
+                        if status not in ("done", "error"):
+                            self._all_done_at = 0
+                            self._finishing = False
                     self._visible = True
                     self._check_done()
                     return
@@ -49,6 +53,7 @@ class TaskBoard:
             self._visible = True
             self._all_done_at = 0
             self._finishing = False
+            self._check_done()
 
     def clear(self):
         with self._lock:

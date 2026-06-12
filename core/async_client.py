@@ -96,7 +96,9 @@ def _try_auto_route(messages):
 _TOOL_FRIENDLY_NAMES = {
     "distill_role": "提取角色特征",
     "save_distilled_role": "创建角色",
-    "web_summary": "获取网页内容",
+    "web_summary": "读取网页",
+    "web_search": "搜索",
+    "web_search_and_read": "搜索并阅读",
     "run_shell": "执行命令",
     "read_file": "读取文件",
     "write_file": "写入文件",
@@ -117,6 +119,8 @@ _TOOL_FRIENDLY_NAMES = {
 
 def _tool_display_name(tool_name):
     """工具名 → 用户友好的显示名"""
+    if not tool_name:
+        return "处理中"
     if tool_name in _TOOL_FRIENDLY_NAMES:
         return _TOOL_FRIENDLY_NAMES[tool_name]
     if tool_name.startswith("agent_"):
@@ -251,7 +255,13 @@ async def send(client, messages):
 
     _other_tool_count = 0
     _pending_first_tool = None
+    _max_rounds = 20
+    _round = 0
     while True:
+        _round += 1
+        if _round > _max_rounds:
+            yield {"type": "done", "content": "达到最大工具调用轮次限制，已停止。", "assistant_msg": {"role": "assistant", "content": "达到最大工具调用轮次限制，已停止。"}, "usage": None}
+            break
         _sync_system_messages(messages)
         kwargs = _build_kwargs(messages)
         response = await client.chat.completions.create(**kwargs)
