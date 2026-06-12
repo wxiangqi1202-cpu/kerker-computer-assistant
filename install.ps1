@@ -1,115 +1,68 @@
 # KerKer 安装脚本 (Windows PowerShell)
-# 使用方法: 在 PowerShell 中执行
-#   irm https://raw.githubusercontent.com/wxiangqi1202-cpu/kerker-computer-assistant/main/install.ps1 | iex
-# 或本地执行:
-#   .\install.ps1
+# 使用方法:
+#   irm https://gitee.com/wxiangqi1202/kerker/raw/main/install.ps1 | iex
+# 或本地: .\install.ps1
 
 $ErrorActionPreference = "Stop"
 
+# ─── 配置（发布时修改） ───
+$Version   = "0.2.0"
+$GiteeUser = "wxiangqi1202"
+$GiteeRepo = "kerker"
+
+# ─── Banner ───
 Write-Host ""
-Write-Host "  +-----------------------------------+" -ForegroundColor Cyan
-Write-Host "  |  KerKer 安装脚本 (Windows)        |" -ForegroundColor Cyan
-Write-Host "  |  Computational Agent Framework    |" -ForegroundColor Cyan
-Write-Host "  +-----------------------------------+" -ForegroundColor Cyan
+Write-Host "  KerKer Installer" -ForegroundColor Cyan
+Write-Host "  Computational Agent Framework" -ForegroundColor DarkGray
 Write-Host ""
 
-# ---------- Python 检测 ----------
-$PY = $null
-foreach ($cmd in @("python3", "python", "py")) {
-    try {
-        $version = & $cmd --version 2>&1
-        if ($version -match "Python (\d+)\.(\d+)") {
-            $major = [int]$Matches[1]
-            $minor = [int]$Matches[2]
-            if ($major -ge 3 -and $minor -ge 9) {
-                $PY = $cmd
-                break
-            }
-        }
-    } catch {}
-}
-
-if (-not $PY) {
-    Write-Host "  X 未找到 Python 3.9+，请先安装" -ForegroundColor Red
-    Write-Host "    下载: https://www.python.org/downloads/" -ForegroundColor DarkGray
-    Write-Host "    安装时请勾选 'Add Python to PATH'" -ForegroundColor DarkGray
-    exit 1
-}
-
-$pyVersion = & $PY --version 2>&1
-Write-Host "  Python: $PY ($pyVersion)"
-
-# ---------- pip 检测 ----------
-$PIP = $null
+# ─── 架构检测 ───
+$Arch = if ([Environment]::Is64BitOperatingSystem) { "x86_64" } else { "x86" }
+# ARM64 检测 (Windows 11+)
 try {
-    & $PY -m pip --version 2>&1 | Out-Null
-    $PIP = "$PY -m pip"
-} catch {
-    foreach ($cmd in @("pip3", "pip")) {
-        try {
-            & $cmd --version 2>&1 | Out-Null
-            $PIP = $cmd
-            break
-        } catch {}
-    }
-}
+    if ((Get-CimInstance Win32_Processor).Architecture -eq 12) { $Arch = "arm64" }
+} catch {}
 
-if (-not $PIP) {
-    Write-Host "  X 未找到 pip" -ForegroundColor Red
-    Write-Host "    尝试: $PY -m ensurepip --upgrade" -ForegroundColor DarkGray
-    exit 1
-}
-Write-Host "  pip: $PIP"
+Write-Host "  -> 系统: windows-$Arch" -ForegroundColor DarkGray
 
-# ---------- git 检测 ----------
+# ─── 下载 ───
+$FileName    = "kerker-windows-${Arch}.exe"
+$DownloadUrl = "https://gitee.com/$GiteeUser/$GiteeRepo/releases/download/v$Version/$FileName"
+$InstallDir  = Join-Path $env:USERPROFILE ".kerker"
+$Target      = Join-Path $InstallDir "kerker.exe"
+
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+
+Write-Host "  -> 下载 KerKer v$Version..." -ForegroundColor Cyan
+
 try {
-    git --version | Out-Null
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Invoke-WebRequest -Uri $DownloadUrl -OutFile $Target -UseBasicParsing
 } catch {
-    Write-Host "  X 未找到 git，请先安装" -ForegroundColor Red
-    Write-Host "    下载: https://git-scm.com/download/win" -ForegroundColor DarkGray
+    Write-Host "  X 下载失败: $_" -ForegroundColor Red
+    Write-Host "    URL: $DownloadUrl" -ForegroundColor DarkGray
     exit 1
 }
-Write-Host ""
 
-# ---------- 安装 ----------
-$InstallDir = Join-Path $env:USERPROFILE ".kerker\src"
+$Size = [math]::Round((Get-Item $Target).Length / 1MB, 1)
+Write-Host "  √ 下载完成 (${Size}MB)" -ForegroundColor Green
 
-if (Test-Path (Join-Path $InstallDir ".git")) {
-    Write-Host "  更新已有安装..."
-    Push-Location $InstallDir
-    try {
-        git pull --quiet
-    } catch {
-        Write-Host "  ! git pull 失败，使用本地版本继续" -ForegroundColor Yellow
-    }
-    Pop-Location
+# ─── 添加到 PATH ───
+$UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if ($UserPath -notlike "*$InstallDir*") {
+    [Environment]::SetEnvironmentVariable("Path", "$InstallDir;$UserPath", "User")
+    $env:Path = "$InstallDir;$env:Path"
+    Write-Host "  √ 已添加到用户 PATH" -ForegroundColor Green
 } else {
-    if (Test-Path $InstallDir) {
-        Remove-Item -Recurse -Force $InstallDir
-    }
-    Write-Host "  下载 KerKer..."
-    git clone --quiet --depth 1 https://github.com/wxiangqi1202-cpu/kerker-computer-assistant.git $InstallDir
+    Write-Host "  √ PATH 已包含安装目录" -ForegroundColor Green
 }
 
-Write-Host "  安装依赖..."
-Push-Location $InstallDir
-& $PY -m pip install --quiet -e .
-Pop-Location
-
-# ---------- 验证 ----------
-$kerkerCmd = Get-Command kerker -ErrorAction SilentlyContinue
-if ($kerkerCmd) {
-    Write-Host ""
-    Write-Host "  √ 安装完成！" -ForegroundColor Green
-    Write-Host "  路径: $($kerkerCmd.Source)" -ForegroundColor DarkGray
-} else {
-    Write-Host ""
-    Write-Host "  √ 安装完成！" -ForegroundColor Green
-    Write-Host "  ! kerker 命令未在 PATH 中找到" -ForegroundColor Yellow
-    Write-Host "    可直接运行: $PY $InstallDir\main.py" -ForegroundColor DarkGray
-}
-
+# ─── 完成 ───
 Write-Host ""
-Write-Host "  输入 kerker 启动"
-Write-Host "  首次启动会引导你完成 API Key 配置"
+Write-Host "  安装成功！" -ForegroundColor Green
+Write-Host ""
+Write-Host "  使用:  kerker" -ForegroundColor Cyan
+Write-Host "  首次启动自动引导 API Key 配置" -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "  (如果 kerker 命令未生效，请重启终端)" -ForegroundColor DarkGray
 Write-Host ""
