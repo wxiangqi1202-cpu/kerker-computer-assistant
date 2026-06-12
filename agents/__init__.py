@@ -145,7 +145,6 @@ def _register_as_skill(agent):
             tracker.set_original_task(task)
             _planner_used = True
         else:
-            tracker.agent_start(agent.name)
             context_prompt = tracker.build_context_prompt(agent_name=agent.name)
             if context_prompt:
                 task = f"{context_prompt}\n\n[当前任务] {task}"
@@ -159,15 +158,10 @@ def _register_as_skill(agent):
                     tracker.set_plan(steps)
             else:
                 summary = _summarize_result(result)
-                tracker.agent_done(agent.name, summary=summary)
                 tracker.add_memory(agent.name, task[:200], summary)
 
         except Exception as err:
             error_msg = f"[{agent.name}] 执行失败: {str(err)[:150]}"
-
-            if agent.name != "planner":
-                tracker.agent_error(agent.name, error=str(err)[:100])
-
             tracker.add_memory(agent.name, task[:200], error_msg)
             result = error_msg
         finally:

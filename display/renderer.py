@@ -130,9 +130,10 @@ async def render(event_stream, spinner=None, taskboard=None):
             if taskboard:
                 taskboard.clear()
             spinner.stop()
-            tracker.reset()
-            agents.clear_plan()
-            sys.stdout.write(f"\n  \033[2m⏹ 已中断 (ESC)\033[0m\n\n")
+            tracker.pause_on_interrupt()
+            import agents as _agents_mod
+            _agents_mod._planner_used = False
+            sys.stdout.write(f"\n  \033[2m⏹ 已中断 (ESC) — 发送消息可继续执行\033[0m\n\n")
             sys.stdout.flush()
         else:
             if taskboard:

@@ -227,6 +227,8 @@ async def send(client, messages):
             tracker.finish_all()
             yield {"type": "done", "content": "达到最大工具调用轮次限制，已停止。", "assistant_msg": {"role": "assistant", "content": "达到最大工具调用轮次限制，已停止。"}, "usage": None}
             break
+
+        tracker.ensure_step_active()
         _sync_system_messages(messages)
         kwargs = _build_kwargs(messages)
         response = await _api_call_with_retry(client, kwargs)
@@ -262,9 +264,15 @@ async def send(client, messages):
             tracker.agent_start(agent_name)
             yield {"type": "tool_exec", "name": tc["name"], "args": tc["args"]}
             tool_result = await skills.async_call(tc["name"], tc["args"])
-            tracker.agent_done(agent_name, summary=tool_result[:100] if tool_result else "")
+            if "执行失败" in tool_result:
+                tracker.agent_error(agent_name, error=tool_result[:100])
+            else:
+                tracker.agent_done(agent_name, summary=tool_result[:100] if tool_result else "")
             yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})
+
+        if other_calls and tracker.has_plan:
+            tracker.advance_unbound_step()
 
         for tc in other_calls:
             display_name = _tool_display_name(tc["name"])
@@ -274,6 +282,9 @@ async def send(client, messages):
             tracker.tool_done(display_name)
             yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})
+
+        if other_calls and tracker.has_plan:
+            tracker.complete_unbound_step()
 
 
 async def _handle_stream(response):

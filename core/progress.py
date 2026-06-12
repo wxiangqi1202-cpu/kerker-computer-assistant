@@ -56,7 +56,6 @@ class ProgressTracker:
         self._finished = False
         self._finish_time: float = 0.0
         self._visible = False
-        self._tool_name_counts: dict[str, int] = {}
         self._generation: int = 0
 
     @property
@@ -125,9 +124,8 @@ class ProgressTracker:
     def tool_start(self, tool_name: str):
         """
         工具开始执行。
-        PLAN_MODE: 忽略（由 agent_start 管理步骤）
-        TOOL_MODE/IDLE: 自动进入 TOOL_MODE，追加工具条目
-        重复工具名自动添加序号（搜索, 搜索②, 搜索③）
+        PLAN_MODE: 忽略（由 plan step 管理展示）
+        TOOL_MODE/IDLE: 仅切换模式，不展示（spinner 负责实时反馈）
         """
         with self._lock:
             if self._mode == ProgressMode.PLAN_MODE:
@@ -135,48 +133,24 @@ class ProgressTracker:
             if self._mode == ProgressMode.IDLE:
                 self._mode = ProgressMode.TOOL_MODE
 
-            display_name = self._dedupe_tool_name(tool_name)
-            step = ProgressStep(
-                name=display_name,
-                status=StepStatus.RUNNING,
-                started_at=time.time(),
-            )
-            self._steps.append(step)
-            if len(self._steps) >= 2:
-                self._visible = True
-            self._finished = False
-
-    def _dedupe_tool_name(self, name: str) -> str:
-        """为重复调用的工具生成唯一显示名"""
-        count = self._tool_name_counts.get(name, 0) + 1
-        self._tool_name_counts[name] = count
-        if count == 1:
-            return name
-        circled = "②③④⑤⑥⑦⑧⑨⑩"
-        idx = min(count - 2, len(circled) - 1)
-        return f"{name}{circled[idx]}"
-
     def tool_done(self, tool_name: str):
-        """
-        工具执行完毕。
-        PLAN_MODE: 忽略（由 agent_done 管理）
-        TOOL_MODE: 标记最近一个 RUNNING 且名称匹配的工具为 DONE
-        """
-        with self._lock:
-            if self._mode == ProgressMode.PLAN_MODE:
-                return
-            for step in reversed(self._steps):
-                if step.status == StepStatus.RUNNING and (
-                    step.name == tool_name or step.name.startswith(tool_name)
-                ):
-                    step.status = StepStatus.DONE
-                    step.finished_at = time.time()
-                    break
+        """工具完成。无面板操作（spinner 负责反馈）。"""
+        pass
 
     def agent_start(self, agent_name: str):
-        """子智能体开始执行。在 PLAN_MODE 下推进对应步骤。"""
+        """
+        子智能体开始执行。在 PLAN_MODE 下推进对应步骤。
+        如果 ensure_step_active 已经推进了匹配的步骤，直接返回它。
+        """
         with self._lock:
             if self._mode == ProgressMode.PLAN_MODE:
+                for step in self._steps:
+                    if step.status == StepStatus.RUNNING and step.agent == agent_name:
+                        return step.name
+                for step in self._steps:
+                    if step.status == StepStatus.RUNNING and step.agent == "":
+                        step.agent = agent_name
+                        return step.name
                 for step in self._steps:
                     if step.status == StepStatus.PENDING and step.agent == agent_name:
                         step.status = StepStatus.RUNNING
@@ -217,6 +191,78 @@ class ProgressTracker:
                         step.finished_at = time.time()
                         return
 
+    def advance_unbound_step(self):
+        """
+        推进下一个无 agent 绑定的 pending 步骤为 running。
+        用于主模型通过普通工具调用执行 plan 步骤时。
+        如果没有无绑定步骤，则推进任意 pending 步骤。
+        """
+        with self._lock:
+            if self._mode != ProgressMode.PLAN_MODE:
+                return None
+            has_running = any(s.status == StepStatus.RUNNING for s in self._steps)
+            if has_running:
+                return None
+            for step in self._steps:
+                if step.status == StepStatus.PENDING and step.agent == "":
+                    step.status = StepStatus.RUNNING
+                    step.started_at = time.time()
+                    return step.name
+            for step in self._steps:
+                if step.status == StepStatus.PENDING:
+                    step.status = StepStatus.RUNNING
+                    step.started_at = time.time()
+                    return step.name
+            return None
+
+    def ensure_step_active(self):
+        """
+        确保面板实时反映进度：
+        1. 如果有 pending 步骤且无 running → 推进一个
+        2. 如果所有步骤已 done 但未 finished → 追加 "生成总结" 步骤
+        每轮 API 调用开始时调用。
+        """
+        with self._lock:
+            if self._mode != ProgressMode.PLAN_MODE:
+                return
+            has_running = any(s.status == StepStatus.RUNNING for s in self._steps)
+            if has_running:
+                return
+            has_pending = any(s.status == StepStatus.PENDING for s in self._steps)
+            if has_pending:
+                for step in self._steps:
+                    if step.status == StepStatus.PENDING:
+                        step.status = StepStatus.RUNNING
+                        step.started_at = time.time()
+                        return
+            if self._steps and not self._finished:
+                all_done = all(s.status in (StepStatus.DONE, StepStatus.ERROR) for s in self._steps)
+                if all_done:
+                    self._steps.append(ProgressStep(
+                        name="生成总结",
+                        status=StepStatus.RUNNING,
+                        started_at=time.time(),
+                    ))
+
+    def complete_unbound_step(self):
+        """
+        完成当前 running 的无绑定步骤。
+        用于一轮非 agent 工具调用结束后。
+        """
+        with self._lock:
+            if self._mode != ProgressMode.PLAN_MODE:
+                return
+            for step in self._steps:
+                if step.status == StepStatus.RUNNING and step.agent == "":
+                    step.status = StepStatus.DONE
+                    step.finished_at = time.time()
+                    return
+            for step in self._steps:
+                if step.status == StepStatus.RUNNING:
+                    step.status = StepStatus.DONE
+                    step.finished_at = time.time()
+                    return
+
     def finish_all(self):
         """所有工作完成，标记剩余步骤并触发结束。无步骤时为空操作。"""
         with self._lock:
@@ -229,6 +275,28 @@ class ProgressTracker:
             self._finished = True
             self._finish_time = time.time()
 
+    def pause_on_interrupt(self):
+        """
+        中断时保留 plan 状态。
+        将 running 步骤回退为 pending，以便下次消息继续执行。
+        非 PLAN_MODE 时直接 reset。
+        """
+        with self._lock:
+            if self._mode != ProgressMode.PLAN_MODE:
+                self._mode = ProgressMode.IDLE
+                self._steps = []
+                self._visible = False
+                self._finished = False
+                return
+            for step in self._steps:
+                if step.status == StepStatus.RUNNING:
+                    step.status = StepStatus.PENDING
+                    step.started_at = 0.0
+            if self._steps and self._steps[-1].name == "生成总结":
+                self._steps.pop()
+            self._finished = False
+            self._visible = bool(self._steps)
+
     def reset(self):
         """重置所有状态（新一轮对话时调用）"""
         with self._lock:
@@ -239,7 +307,6 @@ class ProgressTracker:
             self._finished = False
             self._finish_time = 0.0
             self._visible = False
-            self._tool_name_counts = {}
             self._generation += 1
 
     @property

@@ -27,15 +27,16 @@ class TestProgressTrackerModes(unittest.TestCase):
         self.assertFalse(self.tracker.is_visible)
 
     def test_tool_mode_visible_after_second_tool(self):
+        """TOOL_MODE no longer shows taskboard (spinner handles it)"""
         self.tracker.tool_start("搜索")
         self.tracker.tool_start("读取文件")
-        self.assertTrue(self.tracker.is_visible)
+        self.assertFalse(self.tracker.is_visible)
 
     def test_tool_done_marks_complete(self):
+        """tool_done is a no-op now"""
         self.tracker.tool_start("搜索")
         self.tracker.tool_done("搜索")
-        snapshot = self.tracker.get_snapshot()
-        self.assertEqual(snapshot[0], ("搜索", "done"))
+        self.assertEqual(self.tracker.get_snapshot(), [])
 
     def test_plan_mode_activation(self):
         self.tracker.set_plan([
@@ -113,38 +114,27 @@ class TestProgressTrackerPlanMode(unittest.TestCase):
 
 
 class TestProgressTrackerToolMode(unittest.TestCase):
+    """TOOL_MODE 现在不显示面板，仅切换模式"""
+
     def setUp(self):
         self.tracker = ProgressTracker()
 
-    def test_sequential_tools(self):
+    def test_tool_mode_activated(self):
         self.tracker.tool_start("搜索")
-        self.tracker.tool_done("搜索")
-        self.tracker.tool_start("读取文件")
-        self.tracker.tool_done("读取文件")
-        self.tracker.tool_start("计算")
-        self.tracker.tool_done("计算")
-        snapshot = self.tracker.get_snapshot()
-        self.assertEqual(len(snapshot), 3)
-        self.assertTrue(all(s == "done" for _, s in snapshot))
+        self.assertEqual(self.tracker.mode, ProgressMode.TOOL_MODE)
 
-    def test_finish_marks_done(self):
+    def test_tool_mode_not_visible(self):
+        """TOOL_MODE 下面板不可见（由 spinner 负责）"""
+        self.tracker.tool_start("搜索")
+        self.tracker.tool_start("读取")
+        self.assertFalse(self.tracker.is_visible)
+        self.assertEqual(self.tracker.get_snapshot(), [])
+
+    def test_finish_all_noop_in_tool_mode(self):
+        """TOOL_MODE 无步骤，finish_all 是空操作"""
         self.tracker.tool_start("搜索")
         self.tracker.finish_all()
-        self.assertTrue(self.tracker.is_finished)
-        snapshot = self.tracker.get_snapshot()
-        self.assertEqual(snapshot[0][1], "done")
-
-    def test_snapshot_consistency(self):
-        """快照在任何时刻都应该保持一致的计数"""
-        self.tracker.tool_start("A")
-        self.tracker.tool_start("B")
-        self.tracker.tool_done("A")
-        snapshot = self.tracker.get_snapshot()
-        done_count = sum(1 for _, s in snapshot if s == "done")
-        running_count = sum(1 for _, s in snapshot if s == "running")
-        self.assertEqual(done_count, 1)
-        self.assertEqual(running_count, 1)
-        self.assertEqual(len(snapshot), 2)
+        self.assertFalse(self.tracker.is_finished)
 
 
 class TestProgressTrackerContext(unittest.TestCase):
@@ -181,38 +171,66 @@ class TestProgressTrackerEdgeCases(unittest.TestCase):
         self.assertFalse(tracker.is_finished)
         self.assertEqual(tracker.get_snapshot(), [])
 
-    def test_repeated_tool_names_deduped(self):
-        """重复工具名应自动添加序号"""
+    def test_repeated_tool_names_no_panel(self):
+        """重复工具调用不再显示在面板中"""
         tracker = ProgressTracker()
         tracker.tool_start("搜索")
         tracker.tool_start("搜索")
         tracker.tool_start("搜索")
-        snapshot = tracker.get_snapshot()
-        names = [name for name, _ in snapshot]
-        self.assertEqual(names[0], "搜索")
-        self.assertEqual(names[1], "搜索②")
-        self.assertEqual(names[2], "搜索③")
+        self.assertEqual(tracker.get_snapshot(), [])
 
-    def test_tool_done_matches_deduped_name(self):
-        """tool_done 应能匹配去重后的名称"""
+    def test_ensure_step_active_advances_pending(self):
+        """ensure_step_active 推进下一个 pending 步骤"""
         tracker = ProgressTracker()
-        tracker.tool_start("搜索")
-        tracker.tool_done("搜索")
-        tracker.tool_start("搜索")
-        tracker.tool_done("搜索")
+        tracker.set_plan([
+            {"step": "步骤1", "agent": ""},
+            {"step": "步骤2", "agent": ""},
+        ])
+        tracker.ensure_step_active()
+        snapshot = tracker.get_snapshot()
+        self.assertEqual(snapshot[0][1], "running")
+        self.assertEqual(snapshot[1][1], "pending")
+
+    def test_ensure_step_active_noop_if_already_running(self):
+        """已有 running 步骤时不再推进"""
+        tracker = ProgressTracker()
+        tracker.set_plan([
+            {"step": "步骤1", "agent": ""},
+            {"step": "步骤2", "agent": ""},
+        ])
+        tracker.ensure_step_active()
+        tracker.ensure_step_active()
+        snapshot = tracker.get_snapshot()
+        self.assertEqual(snapshot[0][1], "running")
+        self.assertEqual(snapshot[1][1], "pending")
+
+    def test_pause_on_interrupt_preserves_plan(self):
+        """中断后 plan 状态保留，running 回退为 pending"""
+        tracker = ProgressTracker()
+        tracker.set_plan([
+            {"step": "A", "agent": "r"},
+            {"step": "B", "agent": ""},
+        ])
+        tracker.agent_start("r")
+        tracker.pause_on_interrupt()
+        self.assertTrue(tracker.has_plan)
+        snapshot = tracker.get_snapshot()
+        self.assertEqual(snapshot[0][1], "pending")
+
+    def test_pause_then_resume(self):
+        """中断后可以恢复执行"""
+        tracker = ProgressTracker()
+        tracker.set_plan([
+            {"step": "A", "agent": "r"},
+            {"step": "B", "agent": ""},
+        ])
+        tracker.agent_start("r")
+        tracker.agent_done("r", summary="ok")
+        tracker.pause_on_interrupt()
+        tracker.ensure_step_active()
         snapshot = tracker.get_snapshot()
         self.assertEqual(snapshot[0][1], "done")
-        self.assertEqual(snapshot[1][1], "done")
-
-    def test_reset_clears_tool_name_counts(self):
-        """reset 后工具名计数清零"""
-        tracker = ProgressTracker()
-        tracker.tool_start("搜索")
-        tracker.tool_start("搜索")
-        tracker.reset()
-        tracker.tool_start("搜索")
-        snapshot = tracker.get_snapshot()
-        self.assertEqual(snapshot[0][0], "搜索")
+        self.assertEqual(snapshot[1][1], "running")
 
     def test_agent_start_without_plan_returns_none(self):
         """非 PLAN_MODE 下 agent_start 返回 None"""
@@ -231,7 +249,8 @@ class TestProgressTrackerEdgeCases(unittest.TestCase):
     def test_multiple_finish_all_idempotent(self):
         """多次 finish_all 结果一致"""
         tracker = ProgressTracker()
-        tracker.tool_start("A")
+        tracker.set_plan([{"step": "X", "agent": ""}])
+        tracker.ensure_step_active()
         tracker.finish_all()
         snapshot1 = tracker.get_snapshot()
         tracker.finish_all()
@@ -247,17 +266,12 @@ class TestProgressTrackerEdgeCases(unittest.TestCase):
         self.assertFalse(tracker.has_plan)
         self.assertEqual(tracker.mode, ProgressMode.IDLE)
 
-    def test_different_tools_not_deduped(self):
-        """不同工具名称不应互相影响"""
+    def test_different_tools_no_panel(self):
+        """工具调用不再显示在面板"""
         tracker = ProgressTracker()
         tracker.tool_start("搜索")
         tracker.tool_start("读取文件")
-        tracker.tool_start("搜索")
-        snapshot = tracker.get_snapshot()
-        names = [name for name, _ in snapshot]
-        self.assertEqual(names[0], "搜索")
-        self.assertEqual(names[1], "读取文件")
-        self.assertEqual(names[2], "搜索②")
+        self.assertEqual(tracker.get_snapshot(), [])
 
 
 class TestTaskBoardRenderer(unittest.TestCase):
@@ -269,25 +283,23 @@ class TestTaskBoardRenderer(unittest.TestCase):
         self.assertEqual(board.get_lines(tick=0), [])
 
     def test_cleared_then_new_content_auto_reset(self):
-        """clear 后如果 tracker 有新可见内容，应自动恢复"""
+        """clear 后如果 tracker 被 reset 并有新 plan，应自动恢复"""
         from display.taskboard import TaskBoard
         tracker = ProgressTracker()
         board = TaskBoard()
         board.set_tracker(tracker)
 
-        tracker.tool_start("A")
-        tracker.tool_start("B")
+        tracker.set_plan([{"step": "A", "agent": ""}, {"step": "B", "agent": ""}])
         board.clear()
         self.assertEqual(board.get_lines(tick=0), [])
 
         tracker.reset()
-        tracker.tool_start("C")
-        tracker.tool_start("D")
+        tracker.set_plan([{"step": "C", "agent": ""}, {"step": "D", "agent": ""}])
         lines = board.get_lines(tick=0)
         self.assertTrue(len(lines) > 0)
 
     def test_single_tool_not_visible(self):
-        """单个工具调用不应显示面板"""
+        """TOOL_MODE 不显示面板"""
         from display.taskboard import TaskBoard
         tracker = ProgressTracker()
         board = TaskBoard()

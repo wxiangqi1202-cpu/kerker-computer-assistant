@@ -246,7 +246,6 @@ async def _async_main():
         except asyncio.CancelledError:
             spinner.stop()
             taskboard.clear()
-            agents.clear_plan()
             messages.clear()
             messages.extend(messages_backup)
         except Exception as error:
