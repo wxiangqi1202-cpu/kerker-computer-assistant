@@ -93,6 +93,7 @@ def _apply_model(model_name, ctx):
     config.BASE_URL = config.MODELS[model_name]["base_url"]
     ctx["api_client"] = create_client()
     config.save_user_config()
+    _console.print(f"  [green]✓ 模型: {config.MODELS[model_name]['name']}[/green]")
 
 
 @command("/role", "切换/新建/管理角色")

@@ -42,7 +42,7 @@ def _pick_fallback(items, title="", current_idx=0):
 
 
 def _pick_unix(items, title="", current_idx=0):
-    """Unix 终端的交互式选择器"""
+    """Unix 终端的交互式选择器 —— 选择后完全清除，不留残余行"""
     import tty
     import termios
     import select
@@ -51,6 +51,7 @@ def _pick_unix(items, title="", current_idx=0):
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     total_printed = 0
+    title_lines = 0
 
     def _render():
         nonlocal total_printed
@@ -64,12 +65,21 @@ def _pick_unix(items, title="", current_idx=0):
             if hint:
                 sys.stdout.write(f"  \033[90m{hint}\033[0m")
             sys.stdout.write("\033[K\n")
-        status = f"  \033[90m[{selected + 1}/{len(items)}] ↑↓ 选择  Enter 确认  ESC 取消\033[0m\033[K\n"
-        sys.stdout.write(status)
         sys.stdout.flush()
-        total_printed = len(items) + 1
+        total_printed = len(items)
 
-    def _clear():
+    def _clear_all():
+        """清除所有输出（包括 title）"""
+        count = total_printed + title_lines
+        if count > 0:
+            sys.stdout.write(f"\033[{count}A")
+            for _ in range(count):
+                sys.stdout.write("\033[2K\n")
+            sys.stdout.write(f"\033[{count}A")
+            sys.stdout.flush()
+
+    def _clear_list():
+        """只清除列表部分（重新渲染用）"""
         if total_printed > 0:
             sys.stdout.write(f"\033[{total_printed}A")
             for _ in range(total_printed):
@@ -84,8 +94,9 @@ def _pick_unix(items, title="", current_idx=0):
             os.read(fd, 4096)
 
         if title:
-            sys.stdout.write(f"\n  \033[1m{title}\033[0m\n\n")
+            sys.stdout.write(f"\n  \033[2m{title}\033[0m\n")
             sys.stdout.flush()
+            title_lines = 2
 
         _render()
 
@@ -101,27 +112,24 @@ def _pick_unix(items, title="", current_idx=0):
                     else:
                         while select.select([sys.stdin], [], [], 0.02)[0]:
                             os.read(fd, 1)
-                    _clear()
+                    _clear_list()
                     _render()
                 else:
-                    _clear()
+                    _clear_all()
                     return None
             elif ch in (b"\r", b"\n"):
-                _clear()
-                chosen = items[selected]
-                sys.stdout.write(f"  \033[36m▸\033[0m {chosen.get('label', '')}\n")
-                sys.stdout.flush()
+                _clear_all()
                 return selected
             elif ch in (b"q", b"Q", b"\x03"):
-                _clear()
+                _clear_all()
                 return None
             elif ch == b"k":
                 selected = (selected - 1) % len(items)
-                _clear()
+                _clear_list()
                 _render()
             elif ch == b"j":
                 selected = (selected + 1) % len(items)
-                _clear()
+                _clear_list()
                 _render()
     finally:
         try:
