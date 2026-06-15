@@ -42,6 +42,35 @@ def _print_status_bar():
     sys.stdout.flush()
 
 
+def _model_short_name(model_id):
+    """
+    自动生成模型缩写，任何新模型无需手动配置。
+    规则：
+    - 按 '-' 分段，跳过通用前缀（deepseek/chat/latest）
+    - 跳过参数量标记（70b/405b/8b 等纯数字+b）
+    - 版本号段（v4, 3.5, 4o, 1.5）完整保留
+    - 其余段取首字母
+    """
+    import re
+    skip = {"deepseek", "chat", "latest"}
+    parts = model_id.lower().replace("_", "-").split("-")
+    parts = [p for p in parts if p and p not in skip]
+    if not parts:
+        parts = model_id.lower().replace("_", "-").split("-")
+        parts = [p for p in parts if p]
+    result = []
+    for p in parts:
+        if re.match(r'^\d+b$', p):
+            result.append(p)
+        elif len(p) <= 3 and any(c.isdigit() for c in p):
+            result.append(p)
+        elif p[0].isdigit():
+            result.append(p.split(".")[0][:2])
+        else:
+            result.append(p[0])
+    return "".join(result) or model_id[:4]
+
+
 
 async def _read_multiline(session):
     """读取多行输入直到遇到结束的 \"\"\""""
@@ -190,7 +219,14 @@ async def _async_main():
             if not _first_prompt:
                 _print_status_bar()
             _first_prompt = False
-            user_input = (await session.prompt_async("  › ")).strip()
+            from prompt_toolkit.formatted_text import HTML
+            short = _model_short_name(config.MODEL)
+            prompt_text = HTML(
+                f'  <style fg="gray">{short}</style>'
+                f'<style fg="gray">·</style>'
+                f'<style fg="ansicyan">{config.CURRENT_ROLE}</style> › '
+            )
+            user_input = (await session.prompt_async(prompt_text)).strip()
         except (EOFError, KeyboardInterrupt):
             _autosave(messages)
             config.save_user_config()
