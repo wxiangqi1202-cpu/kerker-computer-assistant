@@ -7,11 +7,14 @@ import asyncio
 from openai import AsyncOpenAI, APIStatusError, APIConnectionError, APITimeoutError
 from core import config
 from core.credentials import load_api_key
+from core.tokens import count_tokens
 import skills
 
 
 _API_MAX_RETRIES = 3
 _API_RETRY_BASE_DELAY = 1.0
+_COMPRESS_AT_ROUNDS = (5, 10, 15)
+_TOOL_RESULT_MAX_CHARS = 800
 
 
 async def _api_call_with_retry(client, kwargs):
@@ -31,6 +34,48 @@ async def _api_call_with_retry(client, kwargs):
     raise last_error
 
 
+def _compress_tool_results(messages, keep_recent=4):
+    """
+    压缩早期的 tool result 消息，减少 context 膨胀。
+
+    策略：
+    - 保留最近 keep_recent 条 tool 消息完整内容
+    - 更早的 tool 消息：超过 _TOOL_RESULT_MAX_CHARS 的截断为摘要
+    - system/user/assistant 消息不压缩
+    """
+    tool_indices = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
+    if len(tool_indices) <= keep_recent:
+        return
+
+    compress_indices = tool_indices[:-keep_recent]
+    for idx in compress_indices:
+        content = messages[idx].get("content", "")
+        if len(content) > _TOOL_RESULT_MAX_CHARS:
+            first_lines = content[:300].rsplit("\n", 1)[0]
+            last_lines = content[-200:]
+            messages[idx]["content"] = (
+                f"{first_lines}\n...[已压缩，原文 {len(content)} 字]...\n{last_lines}"
+            )
+
+
+def _trim_tool_result(result_text, max_chars=2000):
+    """
+    对单次工具返回结果进行即时精简。
+    超过 max_chars 时保留首尾关键信息。
+    """
+    if not result_text or len(result_text) <= max_chars:
+        return result_text
+
+    head_size = int(max_chars * 0.6)
+    tail_size = int(max_chars * 0.3)
+
+    head = result_text[:head_size].rsplit("\n", 1)[0]
+    tail = result_text[-tail_size:].split("\n", 1)[-1] if "\n" in result_text[-tail_size:] else result_text[-tail_size:]
+    omitted = len(result_text) - len(head) - len(tail)
+
+    return f"{head}\n\n...[省略 {omitted} 字]...\n\n{tail}"
+
+
 def create_client():
     api_key = load_api_key()
     if not api_key:
@@ -40,7 +85,7 @@ def create_client():
     return AsyncOpenAI(api_key=api_key, base_url=base_url)
 
 
-def _build_kwargs(messages):
+def _build_kwargs(messages, route_action=None, user_input=None):
     extra_body = {}
     if config.ENABLE_THINKING:
         extra_body["thinking"] = {"type": "enabled"}
@@ -58,7 +103,11 @@ def _build_kwargs(messages):
     if config.STREAM:
         kwargs["stream_options"] = {"include_usage": True}
 
-    tool_specs = skills.get_tool_specs()
+    tool_specs = skills.get_filtered_tool_specs(
+        role_name=config.CURRENT_ROLE,
+        user_input=user_input,
+        route_action=route_action,
+    )
     if tool_specs:
         kwargs["tools"] = tool_specs
 
@@ -77,10 +126,8 @@ def _extract_usage(usage_obj):
 
 def _try_auto_route(messages):
     """
-    检查最后一条 user 消息 + 对话上下文，判断是否需要自动注入路由指令。
-    返回 (RouteDecision, 需要追加的消息列表) 或 (None, None)。
-
-    当 decision.clear_plan 为 True 时，主动清除旧 plan 状态。
+    最小路由：只在确定性场景注入系统消息。
+    PASS_THROUGH 不注入任何路由指令，完全信任 LLM 自主判断。
     """
     from agents.router import route, RouteDecision
     from agents import get_all_agents, clear_plan
@@ -99,42 +146,35 @@ def _try_auto_route(messages):
         clear_plan()
 
     if decision.action == RouteDecision.PLAN:
-        if decision.reason == "继承上轮规划":
-            plan_steps = tracker.get_step_names()
-            if plan_steps:
-                steps_preview = "、".join(plan_steps[:5])
-                directive = (
-                    f"[自动路由] 继续执行上轮规划（剩余步骤: {steps_preview}）。"
-                    "严格按照规划的步骤顺序，逐个调用相应子智能体执行。"
-                    "每次只调一个，等返回后再调下一个。全部完成后给出总结。"
-                )
-            else:
-                directive = (
-                    "[自动路由] 检测到多步骤任务。推荐调用 agent_planner 进行任务规划。"
-                )
-        elif decision.reason == "算子任务强制规划":
+        if decision.reason == "算子任务强制规划":
             directive = (
                 "[自动路由] 检测到算子开发/调试任务。必须先调用 agent_planner 进行任务规划，"
                 "然后严格按照规划步骤逐个调用相应子智能体执行（ascend_dev / ascend_debug）。"
                 "不要跳过规划直接开发，不要一次性完成所有步骤。"
                 "每完成一个步骤等返回后再执行下一个。"
             )
+        elif decision.reason == "继承上轮规划":
+            context_prompt = tracker.build_context_prompt()
+            plan_steps = tracker.plan_steps
+            if plan_steps:
+                step_lines = []
+                for i, step in enumerate(plan_steps, 1):
+                    agent_hint = f"agent_{step.agent}" if step.agent else "主模型"
+                    step_lines.append(f"  {i}. {step.name} → 调用 {agent_hint}")
+                plan_detail = "\n".join(step_lines)
+                directive = (
+                    f"[自动路由] 继续执行上轮规划。以下是完整规划，请严格按顺序执行:\n"
+                    f"{plan_detail}\n\n"
+                    f"请立即调用第一个待执行步骤对应的子智能体。"
+                    f"每次只调一个，等返回后再调下一个。全部完成后给出总结。"
+                )
+                if context_prompt:
+                    directive += f"\n\n{context_prompt}"
+            else:
+                directive = "[自动路由] 用户要求继续，请根据上下文继续执行任务。"
         else:
-            directive = (
-                "[自动路由] 检测到多步骤任务。推荐调用 agent_planner 进行任务规划。"
-                "如果你选择不调 planner，也请逐个调用工具完成任务，每次只调一个工具，等返回后再调下一个。"
-                "全部完成后再给出最终总结回复。"
-            )
+            directive = "[自动路由] 检测到需要规划的任务。请调用 agent_planner 进行任务规划。"
         return decision, [{"role": "system", "content": directive}]
-
-    if decision.action == RouteDecision.SINGLE_AGENT and decision.agent_name:
-        return decision, [{
-            "role": "system",
-            "content": (
-                f"[自动路由] 检测到该任务适合由 {decision.agent_name} 处理，"
-                f"请调用 agent_{decision.agent_name} 执行此任务。"
-            ),
-        }]
 
     return decision, None
 
@@ -178,21 +218,19 @@ def _sync_system_messages(messages, route_action=None):
     """
     同步 system 消息：角色切换后确保 messages 中的 system 消息是最新的。
     route_action: 路由决策，用于动态裁剪 directive（减少无关 token）。
+      - DIRECT: 不注入任何 directive（简单问候不需要）
+      - PLAN/PASS_THROUGH/None: 注入完整 directive（LLM 需要知道工具和 agent）
     """
     from cli.commands import build_system_messages
     current_system = build_system_messages()
 
-    if route_action:
-        directives = config.get_directives_for_route(route_action)
-        directive_contents = {d for d in directives}
+    if route_action == "direct":
         filtered_system = []
         for msg in current_system:
             content = msg["content"]
             if content in (config.TOOL_DIRECTIVE, config.EXPLORE_DIRECTIVE, config.AGENT_DIRECTIVE):
-                if content in directive_contents:
-                    filtered_system.append(msg)
-            else:
-                filtered_system.append(msg)
+                continue
+            filtered_system.append(msg)
         current_system = filtered_system
 
     current_contents = {m["content"] for m in current_system}
@@ -283,7 +321,18 @@ async def send(client, messages):
         tracker.ensure_step_active()
         if _round == 1:
             _sync_system_messages(messages, route_action=_route_action)
-        kwargs = _build_kwargs(messages)
+        if _round in _COMPRESS_AT_ROUNDS:
+            _compress_tool_results(messages)
+
+        _last_user_input = None
+        if _round == 1:
+            user_msgs = [m for m in messages if m.get("role") == "user"]
+            if user_msgs:
+                _last_user_input = user_msgs[-1].get("content", "")
+
+        kwargs = _build_kwargs(messages,
+                               route_action=_route_action if _round == 1 else "pass_through",
+                               user_input=_last_user_input)
         response = await _api_call_with_retry(client, kwargs)
 
         if config.STREAM:
@@ -358,6 +407,7 @@ async def send(client, messages):
                 tracker.agent_start(agent_name)
                 yield {"type": "tool_exec", "name": tc["name"], "args": tc["args"]}
                 tool_result = await skills.async_call(tc["name"], tc["args"])
+                tool_result = _trim_tool_result(tool_result)
                 if "执行失败" in tool_result:
                     tracker.agent_error(agent_name, error=tool_result[:100])
                 else:
@@ -374,6 +424,7 @@ async def send(client, messages):
             yield {"type": "tool_exec", "name": tc["name"], "args": tc["args"]}
             _tool_start = _time.time()
             tool_result = await skills.async_call(tc["name"], tc["args"])
+            tool_result = _trim_tool_result(tool_result)
             _tool_duration = (_time.time() - _tool_start) * 1000
             _tool_success = "执行出错" not in tool_result and "执行失败" not in tool_result
             metrics.record_tool_call(tc["name"], _tool_duration, success=_tool_success)
@@ -395,6 +446,16 @@ async def send(client, messages):
                     "或者调整策略直接完成剩余任务。"
                 ),
             })
+        elif agent_calls and tracker.has_plan:
+            next_step, next_agent = tracker.peek_next_pending()
+            if next_step and next_agent:
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        f"[执行提示] 上一步已完成。下一步: \"{next_step}\"，"
+                        f"请立即调用 agent_{next_agent} 执行，不要停下来询问用户。"
+                    ),
+                })
 
 
 async def _handle_stream(response):

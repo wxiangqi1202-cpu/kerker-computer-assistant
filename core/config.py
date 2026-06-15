@@ -25,11 +25,19 @@ class Config:
     }
 
     AGENT_DIRECTIVE = (
-        "重要：你拥有多个子智能体工具（agent_planner, agent_researcher 等）。"
-        "对于复杂任务，先调用 agent_planner 进行任务规划，"
-        "然后严格按照规划的步骤顺序，逐个调用相应的子智能体执行。"
-        "每次只调用一个子智能体，等它返回结果后再调用下一个。"
-        "全部步骤完成后再给出最终总结回复。"
+        "你拥有 agent_planner（任务规划）和多个子智能体（agent_researcher, agent_code_reviewer, agent_ascend_dev 等）。\n"
+        "判断是否需要规划的标准：\n"
+        "- 任务需要多个步骤才能完成（如：搭建系统、开发完整功能、多步调研+实现） → 调用 agent_planner 先规划\n"
+        "- 任务只需一步即可完成（如：解释概念、写一个函数、回答问题、分析一段代码） → 直接回答或直接调工具\n"
+        "- 判断依据是任务本身的复杂度，不是用户描述的长短\n\n"
+        "规划后执行规则：\n"
+        "- 收到 planner 返回的步骤列表后，严格按顺序逐个调用对应子智能体\n"
+        "- 每次只调一个，等返回后再调下一个\n"
+        "- 全部完成后给出最终总结\n\n"
+        "特别注意：\n"
+        "- '帮我做一个电商网站' 虽然只有一句话，但需要规划\n"
+        "- '解释一下虚拟DOM的原理' 虽然问题很长，但直接回答即可\n"
+        "- 不确定时偏向直接回答，用户会追问如果需要更多"
     )
 
     TOOL_DIRECTIVE = (
@@ -56,13 +64,6 @@ class Config:
         "5. 尝试执行命令看看结果\n"
         "只有在尝试探索后确认没有可行方案时，才告知用户并给出替代建议。"
     )
-
-    DIRECTIVE_PROFILES = {
-        "full": ["TOOL_DIRECTIVE", "EXPLORE_DIRECTIVE", "AGENT_DIRECTIVE"],
-        "tool_only": ["TOOL_DIRECTIVE"],
-        "agent_focus": ["TOOL_DIRECTIVE", "AGENT_DIRECTIVE"],
-        "minimal": [],
-    }
 
     _BUILTIN_ROLES = None
     _PERSIST_KEYS = ("MODEL", "CURRENT_ROLE", "STREAM", "REASONING_EFFORT",
@@ -149,23 +150,6 @@ class Config:
         else:
             self.MODELS[model] = {"name": model, "base_url": base_url}
         self.save_user_config()
-
-    def get_directives_for_route(self, route_action=None):
-        """
-        根据路由决策返回应注入的 directive 列表。
-        - PLAN/SINGLE_AGENT: full（需要工具+探索+agent 指令）
-        - DIRECT + 复杂度 > 0: tool_only（可能需要工具）
-        - DIRECT + 简单对话: minimal（节省 token）
-        """
-        if route_action in ("plan", "single_agent"):
-            profile = "full"
-        elif route_action == "direct":
-            profile = "tool_only"
-        else:
-            profile = "full"
-
-        directive_names = self.DIRECTIVE_PROFILES.get(profile, self.DIRECTIVE_PROFILES["full"])
-        return [getattr(self, name) for name in directive_names if hasattr(self, name)]
 
     def load_user_config(self):
         if not os.path.isfile(self.CONFIG_FILE):

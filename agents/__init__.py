@@ -156,6 +156,11 @@ def _register_as_skill(agent):
                 steps = _parse_planner_result(result)
                 if steps:
                     tracker.set_plan(steps)
+                    step_preview = "\n".join(
+                        f"  {i+1}. {s['step']}" + (f" → {s['agent']}" if s.get('agent') else "")
+                        for i, s in enumerate(steps)
+                    )
+                    result = f"规划完成（{len(steps)} 步）:\n{step_preview}\n\n请按此规划顺序执行。"
             else:
                 summary = _summarize_result(result)
                 tracker.add_memory(agent.name, task[:200], summary)
@@ -192,6 +197,21 @@ def clear_plan():
     _planner_used = False
     from core.progress import get_tracker
     get_tracker().reset()
+
+
+def get_prefetch_hint():
+    """
+    预测性 prefetch：获取下一步的 agent 名称和预构建 context。
+    在当前 agent 执行期间调用，提前准备下一步参数。
+    返回 (agent_name, context_prompt) 或 (None, None)。
+    """
+    from core.progress import get_tracker
+    tracker = get_tracker()
+    next_step, next_agent = tracker.peek_next_pending()
+    if not next_step or not next_agent:
+        return None, None
+    context_prompt = tracker.build_context_prompt(agent_name=next_agent)
+    return next_agent, context_prompt
 
 
 def _auto_load():

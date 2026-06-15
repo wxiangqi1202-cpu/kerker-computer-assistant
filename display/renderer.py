@@ -69,10 +69,6 @@ async def render(event_stream, spinner=None, taskboard=None):
                 decision = event.get("decision")
                 if decision and decision.action == "plan":
                     spinner.update(tips=["正在规划任务..."])
-                elif decision and decision.action == "single_agent" and decision.agent_name:
-                    from core.async_client import _tool_display_name
-                    name = _tool_display_name(f"agent_{decision.agent_name}")
-                    spinner.update(tips=[f"{name}..."])
 
             elif etype == "thinking":
                 spinner.update(tips=THINKING_TIPS)
@@ -133,8 +129,11 @@ async def render(event_stream, spinner=None, taskboard=None):
             cancel_task.cancel()
         import agents
         from core.progress import get_tracker
+        from core.route_learn import get_route_learner
         tracker = get_tracker()
+        learner = get_route_learner()
         if spinner.interrupted:
+            learner.record_outcome(success=False, interrupted=True)
             recovery.save_on_interrupt()
             if taskboard:
                 taskboard.clear()
@@ -147,11 +146,27 @@ async def render(event_stream, spinner=None, taskboard=None):
             sys.stdout.write(f"\n  \033[2m⏹ 已中断 (ESC){hint}\033[0m\n\n")
             sys.stdout.flush()
         else:
+            learner.record_outcome(success=True, interrupted=False,
+                                   replanned=tracker.needs_replan if tracker.has_plan else False)
             recovery.clear()
-            if taskboard:
-                taskboard.clear()
-            spinner.stop()
-            agents.clear_plan()
+
+            has_pending_plan = (
+                tracker.has_plan and
+                any(s.status.value == "pending" for s in tracker.plan_steps)
+            )
+
+            if has_pending_plan:
+                if taskboard:
+                    taskboard.clear()
+                spinner.stop()
+                tracker.pause_on_interrupt()
+                import agents as _agents_mod
+                _agents_mod._planner_used = False
+            else:
+                if taskboard:
+                    taskboard.clear()
+                spinner.stop()
+                agents.clear_plan()
 
     return reply, assistant_msg
 

@@ -119,6 +119,83 @@ def get_all_specs():
     return _specs_cache_all
 
 
+_TOOL_CATEGORIES = {
+    "core": [
+        "web_search", "web_search_and_read", "web_summary",
+        "run_shell", "read_file", "write_file",
+        "get_current_time",
+    ],
+    "agent": [
+        "agent_planner", "agent_researcher", "agent_code_reviewer",
+        "agent_ascend_dev", "agent_ascend_debug",
+    ],
+    "memory": ["remember", "forget", "recall"],
+    "location": ["get_location", "get_weather"],
+    "math": ["calculate"],
+    "role": ["list_roles", "switch_role", "save_distilled_role", "distill_role"],
+    "ascend": ["npu_info", "ascend_build", "ascend_run"],
+}
+
+_ROLE_TOOL_PROFILES = {
+    "默认": ["core", "agent", "memory", "location", "math"],
+    "代码助手": ["core", "agent", "math"],
+    "翻译官": ["core"],
+    "写作助理": ["core"],
+    "算子开发": ["core", "agent", "ascend"],
+}
+
+_CONTEXT_TOOL_TRIGGERS = {
+    "role": [r"角色|人设|切换|role|persona"],
+    "ascend": [r"算子|npu|ascend|tiling|昇腾"],
+    "location": [r"天气|位置|weather|location"],
+    "memory": [r"记住|忘记|回忆|remember|forget|recall"],
+}
+
+
+def get_filtered_tool_specs(role_name=None, user_input=None, route_action=None):
+    """
+    按角色和上下文过滤工具列表。
+
+    策略：
+    - DIRECT route: 不返回工具（简单问候不需要）
+    - 按角色获取基础工具集
+    - 按用户输入关键词动态追加相关工具
+    - 始终包含 agent 类工具（LLM 需要自主决定是否调 planner）
+    """
+    import re
+
+    if route_action == "direct":
+        return []
+
+    from core import config as cfg
+    role = role_name or cfg.CURRENT_ROLE
+
+    profile_categories = _ROLE_TOOL_PROFILES.get(role, _ROLE_TOOL_PROFILES["默认"])
+    allowed_tools = set()
+    for cat in profile_categories:
+        for tool_name in _TOOL_CATEGORIES.get(cat, []):
+            allowed_tools.add(tool_name)
+
+    if user_input:
+        input_lower = user_input.lower()
+        for cat, patterns in _CONTEXT_TOOL_TRIGGERS.items():
+            if cat in profile_categories:
+                continue
+            for pat in patterns:
+                if re.search(pat, input_lower, re.IGNORECASE):
+                    for tool_name in _TOOL_CATEGORIES.get(cat, []):
+                        allowed_tools.add(tool_name)
+                    break
+
+    all_specs = get_tool_specs(include_agent_only=False)
+    filtered = [
+        spec for spec in all_specs
+        if spec["function"]["name"] in allowed_tools
+    ]
+
+    return filtered
+
+
 def get_skill_names():
     return list(_registry.keys())
 

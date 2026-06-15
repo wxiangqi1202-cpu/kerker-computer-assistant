@@ -99,6 +99,20 @@ class ProgressTracker:
         with self._lock:
             self._original_task = task
 
+    def peek_next_pending(self) -> tuple:
+        """
+        预览下一个 pending 步骤（不修改状态）。
+        返回 (step_name, agent_name) 或 (None, None)。
+        用于预测性 prefetch。
+        """
+        with self._lock:
+            if self._mode != ProgressMode.PLAN_MODE:
+                return None, None
+            for step in self._steps:
+                if step.status == StepStatus.PENDING:
+                    return step.name, step.agent
+            return None, None
+
     def set_plan(self, steps: list[dict]):
         """
         从 planner 返回的结构设置计划步骤。
