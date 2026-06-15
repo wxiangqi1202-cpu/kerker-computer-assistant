@@ -266,6 +266,13 @@ def _delete_role(role_name, ctx):
 def cmd_resume(args, ctx):
     arg = args.strip()
 
+    if arg == "continue" or arg == "":
+        from core.interrupt import get_recovery
+        recovery = get_recovery()
+        if recovery.has_state():
+            _do_interrupt_resume(ctx)
+            return
+
     if arg == "save":
         _do_save(ctx)
         return
@@ -279,28 +286,62 @@ def cmd_resume(args, ctx):
         _do_load(arg, ctx)
         return
 
-    items = [
+    from core.interrupt import get_recovery
+    recovery = get_recovery()
+    has_interrupt = recovery.has_state()
+
+    items = []
+    if has_interrupt:
+        state = recovery.get_state()
+        items.append({"label": "续接中断的回复", "hint": state.format_preview()[:40] if state else ""})
+    items.extend([
         {"label": "恢复上次对话", "hint": "自动保存的对话"},
         {"label": "浏览历史对话", "hint": ""},
         {"label": "搜索历史", "hint": "按关键词查找"},
         {"label": "保存当前对话", "hint": ""},
         {"label": "导出 Markdown", "hint": ""},
-    ]
+    ])
 
     idx = pick(items, title="对话管理")
     if idx is None:
         return
 
-    if idx == 0:
+    offset = 1 if has_interrupt else 0
+    if has_interrupt and idx == 0:
+        _do_interrupt_resume(ctx)
+    elif idx == offset + 0:
         _do_quick_resume(ctx)
-    elif idx == 1:
+    elif idx == offset + 1:
         _do_pick_history(ctx)
-    elif idx == 2:
+    elif idx == offset + 2:
         _do_search_prompt()
-    elif idx == 3:
+    elif idx == offset + 3:
         _do_save(ctx)
-    elif idx == 4:
+    elif idx == offset + 4:
         _do_export(ctx)
+
+
+def _do_interrupt_resume(ctx):
+    """从流式中断状态恢复，注入续接消息"""
+    from core.interrupt import get_recovery
+    recovery = get_recovery()
+    state = recovery.consume_state()
+    if not state or not state.has_content:
+        _console.print("  [dim]没有可恢复的中断状态[/dim]")
+        return
+
+    messages = ctx["messages"]
+    resume_msgs = state.build_resume_messages()
+    for msg in resume_msgs:
+        messages.append(msg)
+    ctx["messages"] = messages
+    ctx["_resume_trigger"] = True
+
+    preview = state.partial_reply[-50:].replace("\n", " ").strip() if state.partial_reply else "工具调用中断"
+    _console.print(f"  [green]✓ 已注入续接指令[/green]")
+    _console.print(f"  [dim]断点: ...{preview}[/dim]")
+    _console.print(f"  [dim]发送任意消息即可触发续接[/dim]")
+    _console.print()
 
 
 def _do_quick_resume(ctx):

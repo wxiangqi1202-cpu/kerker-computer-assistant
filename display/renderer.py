@@ -43,6 +43,11 @@ async def render(event_stream, spinner=None, taskboard=None):
     if spinner is None:
         spinner = Spinner()
 
+    from core.interrupt import get_recovery
+    recovery = get_recovery()
+    from core import config as _cfg
+    recovery.start_accumulating(model=_cfg.MODEL)
+
     timer = Timer()
     timer.start()
 
@@ -74,6 +79,7 @@ async def render(event_stream, spinner=None, taskboard=None):
 
             elif etype == "tool":
                 spinner.update(tips=_tool_tip(event.get("name", "")))
+                recovery.accumulate_tool_call({"name": event.get("name", "")})
 
             elif etype == "tool_exec":
                 spinner.update(tips=_tool_tip(event.get("name", "")))
@@ -85,6 +91,7 @@ async def render(event_stream, spinner=None, taskboard=None):
                 if not receiving_text:
                     receiving_text = True
                     spinner.update(tips=GENERATING_TIPS)
+                recovery.accumulate_text(event.get("content", ""))
 
             elif etype == "done":
                 timer.stop()
@@ -108,6 +115,7 @@ async def render(event_stream, spinner=None, taskboard=None):
                                 break
 
                 spinner.stop(final_message=stats)
+                recovery.stop_accumulating()
 
                 if reply:
                     print_markdown(reply)
@@ -127,15 +135,19 @@ async def render(event_stream, spinner=None, taskboard=None):
         from core.progress import get_tracker
         tracker = get_tracker()
         if spinner.interrupted:
+            recovery.save_on_interrupt()
             if taskboard:
                 taskboard.clear()
             spinner.stop()
             tracker.pause_on_interrupt()
             import agents as _agents_mod
             _agents_mod._planner_used = False
-            sys.stdout.write(f"\n  \033[2m⏹ 已中断 (ESC) — 发送消息可继续执行\033[0m\n\n")
+            has_partial = recovery.has_state()
+            hint = " — /resume 可续接" if has_partial else ""
+            sys.stdout.write(f"\n  \033[2m⏹ 已中断 (ESC){hint}\033[0m\n\n")
             sys.stdout.flush()
         else:
+            recovery.clear()
             if taskboard:
                 taskboard.clear()
             spinner.stop()

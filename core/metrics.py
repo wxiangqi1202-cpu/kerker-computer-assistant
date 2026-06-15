@@ -61,16 +61,9 @@ class TurnMetrics:
 class ToolCallRecord:
     """工具调用记录"""
     name: str = ""
-    start_time: float = 0.0
-    end_time: float = 0.0
+    duration_ms: float = 0.0
     success: bool = True
     retries: int = 0
-
-    @property
-    def duration_ms(self) -> float:
-        if self.end_time and self.start_time:
-            return (self.end_time - self.start_time) * 1000
-        return 0.0
 
 
 class MetricsCollector:

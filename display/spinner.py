@@ -1,6 +1,10 @@
 """
 多行动态状态指示器 + ESC 中断 + 任务面板 + stdin 消费
-spinner 渲染：主行 → sub-agent 行 → 任务面板行，统一管理行数。
+
+线程安全设计（v2）：
+- 状态更新通过 queue.Queue 单向传递给渲染线程
+- 渲染线程持有自己的状态副本，无需跨线程锁读取
+- 消除 ProgressTracker 的跨线程锁竞争
 """
 
 import sys
@@ -9,6 +13,7 @@ import tty
 import termios
 import select
 import threading
+import queue
 import time
 import random
 
@@ -56,6 +61,16 @@ class _TipLine:
 
 
 class Spinner:
+    """
+    状态指示器（v2 队列架构）。
+    生产者（主线程/asyncio）通过 update/update_sub 发送消息到队列；
+    消费者（渲染线程）从队列读取并更新本地状态副本后渲染。
+    """
+
+    MSG_UPDATE_MAIN = "main"
+    MSG_UPDATE_SUB = "sub"
+    MSG_REMOVE_SUB = "rm_sub"
+
     def __init__(self):
         self._main_line = None
         self._sub_lines = {}
@@ -63,7 +78,7 @@ class Spinner:
         self._running = False
         self._thread = None
         self._key_thread = None
-        self._lock = threading.Lock()
+        self._msg_queue = queue.Queue(maxsize=256)
         self._render_lock = threading.Lock()
         self._start_time = None
         self._line_count = 0
@@ -74,9 +89,8 @@ class Spinner:
         self._taskboard = taskboard
 
     def update(self, tips=None):
-        with self._lock:
-            if tips:
-                self._main_line = _TipLine(tips)
+        if tips:
+            self._msg_queue.put((self.MSG_UPDATE_MAIN, _TipLine(tips)))
         if not self._running:
             self._running = True
             self.interrupted = False
@@ -89,12 +103,10 @@ class Spinner:
             self._key_thread.start()
 
     def update_sub(self, name, tips):
-        with self._lock:
-            self._sub_lines[name] = (_TipLine(tips), time.time())
+        self._msg_queue.put((self.MSG_UPDATE_SUB, name, _TipLine(tips), time.time()))
 
     def remove_sub(self, name):
-        with self._lock:
-            self._sub_lines.pop(name, None)
+        self._msg_queue.put((self.MSG_REMOVE_SUB, name))
 
     def _enter_cbreak(self):
         fd = sys.stdin.fileno()
@@ -137,19 +149,34 @@ class Spinner:
     def _spin(self):
         spin_idx = 0
         while self._running:
+            self._drain_queue()
             with self._render_lock:
                 self._render_frame(spin_idx)
             spin_idx += 1
             time.sleep(0.08)
 
+    def _drain_queue(self):
+        """批量消费队列中的状态更新消息"""
+        while True:
+            try:
+                msg = self._msg_queue.get_nowait()
+            except queue.Empty:
+                break
+            if msg[0] == self.MSG_UPDATE_MAIN:
+                self._main_line = msg[1]
+            elif msg[0] == self.MSG_UPDATE_SUB:
+                _, name, tip_line, born = msg
+                self._sub_lines[name] = (tip_line, born)
+            elif msg[0] == self.MSG_REMOVE_SUB:
+                self._sub_lines.pop(msg[1], None)
+
     def _render_frame(self, spin_idx):
         now = time.time()
-        with self._lock:
-            main = self._main_line
-            expired = [k for k, (_, born) in self._sub_lines.items() if now - born > 300]
-            for k in expired:
-                self._sub_lines.pop(k, None)
-            subs = [(k, v) for k, (v, _) in self._sub_lines.items()]
+        main = self._main_line
+        expired = [k for k, (_, born) in self._sub_lines.items() if now - born > 300]
+        for k in expired:
+            self._sub_lines.pop(k, None)
+        subs = [(k, v) for k, (v, _) in self._sub_lines.items()]
 
         task_lines = self._taskboard.get_lines(tick=spin_idx) if self._taskboard else []
         total_lines = 1 + len(subs) + len(task_lines)
@@ -216,6 +243,5 @@ class Spinner:
 
         self._start_time = None
         self._main_line = None
-        with self._lock:
-            self._sub_lines.clear()
+        self._sub_lines.clear()
         self._line_count = 0

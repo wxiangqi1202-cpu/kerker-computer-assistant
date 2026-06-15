@@ -4,12 +4,19 @@
 存储结构 (~/.kerker/memory/):
   semantic.json   — 语义记忆：用户偏好、事实、项目信息
   episodes.json   — 情景索引：每次会话的摘要和关键词
+
+搜索机制：
+  - TF-IDF 加权的文本相似度（无需外部依赖）
+  - 字符 bigram 重叠作为 fallback
+  - 按相关度 + 重要性 + 访问频率综合排序
 """
 
 import os
 import json
 import uuid
+import math
 from datetime import datetime
+from collections import Counter
 from core import config
 
 MEMORY_DIR = os.path.join(config.KERKER_HOME, "memory")
@@ -21,16 +28,119 @@ def _ensure_dir():
     os.makedirs(MEMORY_DIR, exist_ok=True)
 
 
+def _tokenize(text):
+    """
+    中英文混合分词：
+    - 英文按空格/标点切分为词
+    - 中文按字切分 + bigram
+    """
+    text = text.lower().strip()
+    tokens = []
+    ascii_buf = []
+
+    for ch in text:
+        if ch.isascii() and ch.isalnum():
+            ascii_buf.append(ch)
+        else:
+            if ascii_buf:
+                word = "".join(ascii_buf)
+                if len(word) >= 2:
+                    tokens.append(word)
+                ascii_buf = []
+            if '\u4e00' <= ch <= '\u9fff':
+                tokens.append(ch)
+
+    if ascii_buf:
+        word = "".join(ascii_buf)
+        if len(word) >= 2:
+            tokens.append(word)
+
+    cjk_chars = [ch for ch in text if '\u4e00' <= ch <= '\u9fff']
+    for i in range(len(cjk_chars) - 1):
+        tokens.append(cjk_chars[i] + cjk_chars[i + 1])
+
+    return tokens
+
+
+def _compute_tf(tokens):
+    """计算词频"""
+    counter = Counter(tokens)
+    total = len(tokens) if tokens else 1
+    return {term: count / total for term, count in counter.items()}
+
+
+class _TFIDFIndex:
+    """轻量 TF-IDF 索引（无外部依赖）"""
+
+    def __init__(self):
+        self._docs = []
+        self._tf_cache = []
+        self._idf_cache = {}
+        self._dirty = True
+
+    def update(self, documents):
+        """重建索引。documents: list[str]"""
+        self._docs = documents
+        self._tf_cache = [_compute_tf(_tokenize(doc)) for doc in documents]
+        self._dirty = True
+
+    def _build_idf(self):
+        """计算 IDF"""
+        if not self._dirty:
+            return
+        num_docs = len(self._docs)
+        if num_docs == 0:
+            self._idf_cache = {}
+            self._dirty = False
+            return
+
+        df = Counter()
+        for tf in self._tf_cache:
+            for term in tf:
+                df[term] += 1
+
+        self._idf_cache = {
+            term: math.log((num_docs + 1) / (count + 1)) + 1
+            for term, count in df.items()
+        }
+        self._dirty = False
+
+    def query(self, text, top_k=5):
+        """
+        查询相似文档。返回 [(index, score), ...] 按 score 降序。
+        """
+        if not self._docs:
+            return []
+
+        self._build_idf()
+        query_tokens = _tokenize(text)
+        query_tf = _compute_tf(query_tokens)
+
+        scores = []
+        for doc_idx, doc_tf in enumerate(self._tf_cache):
+            score = 0.0
+            for term, qtf in query_tf.items():
+                if term in doc_tf:
+                    idf = self._idf_cache.get(term, 1.0)
+                    score += qtf * doc_tf[term] * idf * idf
+            scores.append((doc_idx, score))
+
+        scores.sort(key=lambda x: -x[1])
+        return [(idx, s) for idx, s in scores[:top_k] if s > 0]
+
+
 # ── 语义记忆 ─────────────────────────────
 
 class SemanticMemory:
     """
     持久化的用户偏好和事实知识。
     每条记忆: {"id", "content", "source", "tags", "importance", "created", "updated", "access_count"}
+    搜索使用 TF-IDF 相似度 + 重要性加权。
     """
 
     def __init__(self):
         self._entries = []
+        self._tfidf = _TFIDFIndex()
         self._load()
 
     def _load(self):
@@ -40,6 +150,12 @@ class SemanticMemory:
                     self._entries = json.load(f)
             except Exception:
                 self._entries = []
+        self._rebuild_index()
+
+    def _rebuild_index(self):
+        """重建 TF-IDF 索引"""
+        docs = [e.get("content", "") for e in self._entries]
+        self._tfidf.update(docs)
 
     def _save(self):
         _ensure_dir()
@@ -65,6 +181,7 @@ class SemanticMemory:
                 entry["source"] = source
                 entry["access_count"] += 1
                 self._save()
+                self._rebuild_index()
                 return entry
 
         entry = {
@@ -79,6 +196,7 @@ class SemanticMemory:
         }
         self._entries.append(entry)
         self._save()
+        self._rebuild_index()
         return entry
 
     def remove(self, keyword):
@@ -91,28 +209,52 @@ class SemanticMemory:
         removed = before - len(self._entries)
         if removed > 0:
             self._save()
+            self._rebuild_index()
         return removed
 
     def search(self, query, limit=5):
-        """关键词搜索，按相关度+重要性排序"""
-        query_lower = query.lower()
+        """
+        TF-IDF 语义搜索，按相关度+重要性+访问频率综合排序。
+        比纯关键词匹配能更好地处理同义词和模糊查询。
+        """
+        if not self._entries:
+            return []
+
+        tfidf_results = self._tfidf.query(query, top_k=limit * 2)
+
         scored = []
-        for entry in self._entries:
+        for idx, tfidf_score in tfidf_results:
+            entry = self._entries[idx]
+            importance_bonus = entry.get("importance", 5) * 0.5
+            access_bonus = min(entry.get("access_count", 0), 10) * 0.3
+            final_score = tfidf_score * 10 + importance_bonus + access_bonus
+            scored.append((final_score, idx, entry))
+
+        query_lower = query.lower()
+        matched_indices = {idx for _, idx, _ in scored}
+        for idx, entry in enumerate(self._entries):
+            if idx in matched_indices:
+                continue
             content_lower = entry["content"].lower()
-            score = 0
+            keyword_score = 0
             for word in query_lower.split():
                 if word in content_lower:
-                    score += 10
-            score += entry.get("importance", 5)
-            score += min(entry.get("access_count", 0), 10)
-            if score > 0:
-                entry["access_count"] = entry.get("access_count", 0) + 1
-                scored.append((score, entry))
+                    keyword_score += 5
+            if keyword_score > 0:
+                importance_bonus = entry.get("importance", 5) * 0.5
+                access_bonus = min(entry.get("access_count", 0), 10) * 0.3
+                final_score = keyword_score + importance_bonus + access_bonus
+                scored.append((final_score, idx, entry))
 
         scored.sort(key=lambda x: -x[0])
-        if scored:
+        results = []
+        for _, idx, entry in scored[:limit]:
+            entry["access_count"] = entry.get("access_count", 0) + 1
+            results.append(entry)
+
+        if results:
             self._save()
-        return [e for _, e in scored[:limit]]
+        return results
 
     def get_all(self):
         return list(self._entries)
@@ -129,6 +271,7 @@ class SemanticMemory:
     def clear_all(self):
         self._entries = []
         self._save()
+        self._rebuild_index()
 
     def _is_conflict(self, new_content, old_content):
         """

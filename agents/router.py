@@ -59,17 +59,16 @@ _DIRECT_AGENT_KEYWORDS = {
         re.compile(r"(审查|代码检查|帮我看看.{0,6}代码|检查.{0,6}代码)"),
         re.compile(r"\b(review|code review|check.{0,8}code|audit.{0,8}code)\b", _I),
     ],
-    "ascend_dev": [
-        re.compile(r"(算子开发|AscendC|ascendc|写一个算子|Tiling|tiling)", _I),
-    ],
-    "ascend_debug": [
-        re.compile(r"(算子调试|算子报错|编译.{0,6}错|npu.{0,4}error|ccec)", _I),
-    ],
     "researcher": [
         re.compile(r"(搜索|搜一下|查一下|查找|调研|了解一下|最新|新闻|动态)"),
         re.compile(r"\b(search|look up|find out|latest|news|trending)\b", _I),
     ],
 }
+
+_FORCE_PLAN_PATTERNS = [
+    re.compile(r"(算子开发|AscendC|ascendc|写一个算子|Tiling|tiling)", _I),
+    re.compile(r"(算子调试|算子报错|编译.{0,6}错|npu.{0,4}error|ccec)", _I),
+]
 
 _SIMPLE_PATTERNS = [
     re.compile(r"^.{0,5}$"),
