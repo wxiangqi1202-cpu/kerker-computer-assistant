@@ -228,11 +228,16 @@ async def _async_main():
             event_stream = send(api_client, messages)
             reply, assistant_msg = await render(event_stream, spinner=spinner, taskboard=taskboard)
 
-            if assistant_msg:
-                messages.append(assistant_msg)
-            elif reply:
-                messages.append({"role": "assistant", "content": reply})
-            ctx["messages"] = messages
+            if spinner.interrupted:
+                messages.clear()
+                messages.extend(messages_backup)
+                ctx["messages"] = messages
+            else:
+                if assistant_msg:
+                    messages.append(assistant_msg)
+                elif reply:
+                    messages.append({"role": "assistant", "content": reply})
+                ctx["messages"] = messages
 
         except asyncio.CancelledError:
             spinner.stop()

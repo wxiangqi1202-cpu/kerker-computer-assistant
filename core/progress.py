@@ -181,7 +181,7 @@ class ProgressTracker:
                         return
 
     def agent_error(self, agent_name: str, error: str = ""):
-        """子智能体失败。"""
+        """子智能体失败。标记步骤并记录错误次数。"""
         with self._lock:
             if self._mode == ProgressMode.PLAN_MODE:
                 for step in self._steps:
@@ -190,6 +190,29 @@ class ProgressTracker:
                         step.summary = error
                         step.finished_at = time.time()
                         return
+
+    @property
+    def error_count(self):
+        """当前 plan 中失败步骤数"""
+        with self._lock:
+            return sum(1 for s in self._steps if s.status == StepStatus.ERROR)
+
+    @property
+    def needs_replan(self):
+        """
+        判断是否需要重新规划：
+        - 连续 2 个步骤失败
+        - 或超过 50% 步骤失败
+        """
+        with self._lock:
+            if self._mode != ProgressMode.PLAN_MODE or not self._steps:
+                return False
+            errors = sum(1 for s in self._steps if s.status == StepStatus.ERROR)
+            if errors >= 2:
+                return True
+            if len(self._steps) >= 3 and errors / len(self._steps) > 0.5:
+                return True
+            return False
 
     def advance_unbound_step(self):
         """

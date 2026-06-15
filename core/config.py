@@ -57,6 +57,13 @@ class Config:
         "只有在尝试探索后确认没有可行方案时，才告知用户并给出替代建议。"
     )
 
+    DIRECTIVE_PROFILES = {
+        "full": ["TOOL_DIRECTIVE", "EXPLORE_DIRECTIVE", "AGENT_DIRECTIVE"],
+        "tool_only": ["TOOL_DIRECTIVE"],
+        "agent_focus": ["TOOL_DIRECTIVE", "AGENT_DIRECTIVE"],
+        "minimal": [],
+    }
+
     _BUILTIN_ROLES = None
     _PERSIST_KEYS = ("MODEL", "CURRENT_ROLE", "STREAM", "REASONING_EFFORT",
                      "ENABLE_THINKING", "MAX_CONTEXT_MESSAGES", "AUTO_ROUTE")
@@ -142,6 +149,23 @@ class Config:
         else:
             self.MODELS[model] = {"name": model, "base_url": base_url}
         self.save_user_config()
+
+    def get_directives_for_route(self, route_action=None):
+        """
+        根据路由决策返回应注入的 directive 列表。
+        - PLAN/SINGLE_AGENT: full（需要工具+探索+agent 指令）
+        - DIRECT + 复杂度 > 0: tool_only（可能需要工具）
+        - DIRECT + 简单对话: minimal（节省 token）
+        """
+        if route_action in ("plan", "single_agent"):
+            profile = "full"
+        elif route_action == "direct":
+            profile = "tool_only"
+        else:
+            profile = "full"
+
+        directive_names = self.DIRECTIVE_PROFILES.get(profile, self.DIRECTIVE_PROFILES["full"])
+        return [getattr(self, name) for name in directive_names if hasattr(self, name)]
 
     def load_user_config(self):
         if not os.path.isfile(self.CONFIG_FILE):

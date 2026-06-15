@@ -106,10 +106,11 @@ class RouteDecision:
     PLAN = "plan"
     SINGLE_AGENT = "single_agent"
 
-    def __init__(self, action, agent_name=None, reason=""):
+    def __init__(self, action, agent_name=None, reason="", _clear_plan=False):
         self.action = action
         self.agent_name = agent_name
         self.reason = reason
+        self.clear_plan = _clear_plan
 
     def __repr__(self):
         if self.action == self.SINGLE_AGENT:
@@ -158,32 +159,37 @@ def _check_continue(text):
 def route(user_input, available_agents=None, context=None):
     """
     混合路由策略（regex + LLM fallback）：
-    1. 明确继续指令 + 有未完成规划 → 继续
-    2. 简单对话 → 直接回答
+    1. 明确继续指令 + 有未完成规划 → 继续规划
+    2. 简单对话 → 直接回答（若有未完成规划则清除）
     3. 强制规划模式（算子开发/调试）→ 必须走 PLAN
-    4. 高置信度 regex 匹配（score ≥ 3）→ 直接决策
-    5. 中等置信度（score = 2）→ 尝试 LLM intent classification
+    4. 有未完成规划 + 新输入相关且复杂 → 继续规划
+    5. 高/中置信度复杂任务 → 新规划
     6. agent 关键词匹配 → 单 agent
-    7. 默认直接回答
+    7. 默认直接回答（若有未完成规划则清除）
     """
     text = user_input.strip()
 
-    if context and context.has_plan and _check_continue(text):
+    has_active_plan = context and context.has_plan
+
+    if has_active_plan and _check_continue(text):
         return RouteDecision(RouteDecision.PLAN, reason="继承上轮规划")
 
     for pat in _SIMPLE_PATTERNS:
         if pat.search(text):
+            if has_active_plan:
+                return RouteDecision(RouteDecision.DIRECT, reason="简单对话，清除旧规划",
+                                     _clear_plan=True)
             return RouteDecision(RouteDecision.DIRECT, reason="简单对话")
-
-    if context and context.has_plan:
-        steps = context.plan_steps
-        pending = [s for s in steps if _is_step_pending(s)]
-        if pending and _calc_complexity(text) >= 2:
-            return RouteDecision(RouteDecision.PLAN, reason=f"上轮规划有 {len(pending)} 步未完成")
 
     for pat in _FORCE_PLAN_PATTERNS:
         if pat.search(text):
             return RouteDecision(RouteDecision.PLAN, reason="算子任务强制规划")
+
+    if has_active_plan:
+        steps = context.plan_steps
+        pending = [s for s in steps if _is_step_pending(s)]
+        if pending and _calc_complexity(text) >= 2:
+            return RouteDecision(RouteDecision.PLAN, reason=f"上轮规划有 {len(pending)} 步未完成")
 
     for pat in _INTENT_PLAN_PATTERNS:
         if pat.search(text):
@@ -210,6 +216,10 @@ def route(user_input, available_agents=None, context=None):
                     agent_name=agent_name,
                     reason=f"关键词匹配 {agent_name}",
                 )
+
+    if has_active_plan:
+        return RouteDecision(RouteDecision.DIRECT, reason="新话题，清除旧规划",
+                             _clear_plan=True)
 
     return RouteDecision(RouteDecision.DIRECT, reason="默认直接回答")
 

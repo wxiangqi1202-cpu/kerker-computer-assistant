@@ -22,6 +22,16 @@ _registry = {}
 _TOOL_MAX_RETRIES = 2
 _TOOL_RETRY_DELAY = 0.5
 
+_specs_cache = None
+_specs_cache_all = None
+
+
+def _invalidate_specs_cache():
+    """注册表变更时清除缓存"""
+    global _specs_cache, _specs_cache_all
+    _specs_cache = None
+    _specs_cache_all = None
+
 
 class ToolError(Exception):
     """工具执行错误基类"""
@@ -85,19 +95,28 @@ def register(name, description, parameters, func, agent_only=False):
             }
         }
     }
+    _invalidate_specs_cache()
 
 
 def get_tool_specs(include_agent_only=False):
-    """返回技能描述列表。主模型调用时默认排除 agent_only 技能。"""
-    return [
-        item["spec"] for item in _registry.values()
-        if include_agent_only or not item.get("agent_only")
-    ]
+    """返回技能描述列表（带缓存）。主模型调用时默认排除 agent_only 技能。"""
+    global _specs_cache
+    if not include_agent_only:
+        if _specs_cache is None:
+            _specs_cache = [
+                item["spec"] for item in _registry.values()
+                if not item.get("agent_only")
+            ]
+        return _specs_cache
+    return [item["spec"] for item in _registry.values()]
 
 
 def get_all_specs():
-    """返回所有技能描述（含 agent_only），供子智能体使用"""
-    return [item["spec"] for item in _registry.values()]
+    """返回所有技能描述（含 agent_only，带缓存），供子智能体使用"""
+    global _specs_cache_all
+    if _specs_cache_all is None:
+        _specs_cache_all = [item["spec"] for item in _registry.values()]
+    return _specs_cache_all
 
 
 def get_skill_names():

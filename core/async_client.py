@@ -79,9 +79,11 @@ def _try_auto_route(messages):
     """
     检查最后一条 user 消息 + 对话上下文，判断是否需要自动注入路由指令。
     返回 (RouteDecision, 需要追加的消息列表) 或 (None, None)。
+
+    当 decision.clear_plan 为 True 时，主动清除旧 plan 状态。
     """
     from agents.router import route, RouteDecision
-    from agents import get_all_agents
+    from agents import get_all_agents, clear_plan
     from core.progress import get_tracker
 
     user_msgs = [m for m in messages if m.get("role") == "user"]
@@ -93,8 +95,24 @@ def _try_auto_route(messages):
     tracker = get_tracker()
     decision = route(last_user, available, context=tracker)
 
+    if decision.clear_plan:
+        clear_plan()
+
     if decision.action == RouteDecision.PLAN:
-        if decision.reason == "算子任务强制规划":
+        if decision.reason == "继承上轮规划":
+            plan_steps = tracker.get_step_names()
+            if plan_steps:
+                steps_preview = "、".join(plan_steps[:5])
+                directive = (
+                    f"[自动路由] 继续执行上轮规划（剩余步骤: {steps_preview}）。"
+                    "严格按照规划的步骤顺序，逐个调用相应子智能体执行。"
+                    "每次只调一个，等返回后再调下一个。全部完成后给出总结。"
+                )
+            else:
+                directive = (
+                    "[自动路由] 检测到多步骤任务。推荐调用 agent_planner 进行任务规划。"
+                )
+        elif decision.reason == "算子任务强制规划":
             directive = (
                 "[自动路由] 检测到算子开发/调试任务。必须先调用 agent_planner 进行任务规划，"
                 "然后严格按照规划步骤逐个调用相应子智能体执行（ascend_dev / ascend_debug）。"
@@ -156,10 +174,27 @@ def _tool_display_name(tool_name):
     return tool_name
 
 
-def _sync_system_messages(messages):
-    """同步 system 消息：角色切换后确保 messages 中的 system 消息是最新的"""
+def _sync_system_messages(messages, route_action=None):
+    """
+    同步 system 消息：角色切换后确保 messages 中的 system 消息是最新的。
+    route_action: 路由决策，用于动态裁剪 directive（减少无关 token）。
+    """
     from cli.commands import build_system_messages
     current_system = build_system_messages()
+
+    if route_action:
+        directives = config.get_directives_for_route(route_action)
+        directive_contents = {d for d in directives}
+        filtered_system = []
+        for msg in current_system:
+            content = msg["content"]
+            if content in (config.TOOL_DIRECTIVE, config.EXPLORE_DIRECTIVE, config.AGENT_DIRECTIVE):
+                if content in directive_contents:
+                    filtered_system.append(msg)
+            else:
+                filtered_system.append(msg)
+        current_system = filtered_system
+
     current_contents = {m["content"] for m in current_system}
 
     old_system = [m for m in messages if m["role"] == "system"]
@@ -223,9 +258,11 @@ async def send(client, messages):
 
     _clean_route_messages(messages)
 
+    _route_action = None
     if config.AUTO_ROUTE:
         decision, route_msgs = _try_auto_route(messages)
         if decision:
+            _route_action = decision.action
             yield {"type": "route", "decision": decision}
         if route_msgs:
             for msg in route_msgs:
@@ -234,6 +271,7 @@ async def send(client, messages):
     _max_rounds = 20
     _round = 0
     _first_token_recorded = False
+    _kwargs_cache = None
     while True:
         _round += 1
         if _round > _max_rounds:
@@ -243,7 +281,8 @@ async def send(client, messages):
             break
 
         tracker.ensure_step_active()
-        _sync_system_messages(messages)
+        if _round == 1:
+            _sync_system_messages(messages, route_action=_route_action)
         kwargs = _build_kwargs(messages)
         response = await _api_call_with_retry(client, kwargs)
 
@@ -344,6 +383,18 @@ async def send(client, messages):
 
         if other_calls and tracker.has_plan:
             tracker.complete_unbound_step()
+
+        if tracker.needs_replan:
+            import agents as _agents_mod
+            _agents_mod._planner_used = False
+            messages.append({
+                "role": "system",
+                "content": (
+                    "[执行反馈] 多个步骤执行失败，当前规划可能不合理。"
+                    "请重新调用 agent_planner 制定新的规划方案，"
+                    "或者调整策略直接完成剩余任务。"
+                ),
+            })
 
 
 async def _handle_stream(response):
