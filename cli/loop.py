@@ -49,27 +49,17 @@ async def _read_multiline(session):
     return "\n".join(lines)
 
 
+from core.tokens import count_tokens, count_message_tokens, get_max_context_tokens
+
+
 def _estimate_tokens(text):
-    """粗略估算文本 token 数（中文~1.5 token/字，英文~0.25 token/词）"""
-    if not text:
-        return 0
-    chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
-    other_chars = len(text) - chinese_chars
-    return int(chinese_chars * 1.5 + other_chars * 0.4)
+    """Token 计数（优先 tiktoken 精确计算，fallback 启发式）"""
+    return count_tokens(text)
 
 
 def _msg_tokens(msg):
-    """估算单条消息的 token 数"""
-    content = msg.get("content", "") or ""
-    tokens = _estimate_tokens(content) + 4
-    if msg.get("tool_calls"):
-        for tc in msg["tool_calls"]:
-            func = tc.get("function", {})
-            tokens += _estimate_tokens(func.get("name", "")) + _estimate_tokens(func.get("arguments", ""))
-    return tokens
-
-
-_MAX_CONTEXT_TOKENS = 28000
+    """计算单条消息的 token 数"""
+    return count_message_tokens(msg)
 
 
 def _trim_context(messages):
@@ -86,7 +76,8 @@ def _trim_context(messages):
         non_system = non_system[-msg_limit:]
 
     system_tokens = sum(_msg_tokens(m) for m in system_msgs)
-    budget = _MAX_CONTEXT_TOKENS - system_tokens
+    max_context = get_max_context_tokens()
+    budget = max_context - system_tokens
 
     kept = []
     used_tokens = 0

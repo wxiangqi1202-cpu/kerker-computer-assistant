@@ -620,3 +620,12 @@ def cmd_config(args, ctx):
         _console.print("\n  [dim]已取消[/dim]")
     except Exception as err:
         _console.print(f"  [red]值无效: {err}[/red]")
+
+
+@command("/metrics", "查看性能统计")
+def cmd_metrics(args, ctx):
+    from core.metrics import get_metrics
+    metrics = get_metrics()
+    _console.print()
+    _console.print(metrics.format_summary())
+    _console.print()

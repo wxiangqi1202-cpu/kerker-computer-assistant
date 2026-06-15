@@ -1,5 +1,5 @@
 """
-技能系统 —— 注册表 + 自动加载
+技能系统 —— 注册表 + 自动加载 + 错误分级重试
 
 添加新技能的方式：
 1. 在项目 skills/ 目录下新建 .py 文件（内置技能）
@@ -12,10 +12,63 @@ import importlib
 import importlib.util
 import os
 import pkgutil
+import asyncio
+import inspect
 
 from core import config
 
 _registry = {}
+
+_TOOL_MAX_RETRIES = 2
+_TOOL_RETRY_DELAY = 0.5
+
+
+class ToolError(Exception):
+    """工具执行错误基类"""
+    pass
+
+
+class RetryableError(ToolError):
+    """可重试错误（网络超时、临时性服务不可用）"""
+    pass
+
+
+class FatalError(ToolError):
+    """不可重试错误（权限不足、文件不存在、参数无效）"""
+    pass
+
+
+def _classify_error(error: Exception) -> str:
+    """
+    错误分级：判断是否可重试。
+    返回 'retryable' 或 'fatal'。
+    """
+    err_str = str(error).lower()
+
+    retryable_patterns = [
+        "timeout", "timed out", "connection", "网络",
+        "temporarily", "503", "502", "429", "rate limit",
+        "reset by peer", "broken pipe", "eof",
+    ]
+    for pattern in retryable_patterns:
+        if pattern in err_str:
+            return "retryable"
+
+    fatal_patterns = [
+        "permission", "denied", "not found", "不存在",
+        "no such file", "invalid", "unauthorized", "403", "401",
+        "syntax error", "type error", "name error",
+    ]
+    for pattern in fatal_patterns:
+        if pattern in err_str:
+            return "fatal"
+
+    if isinstance(error, (OSError, IOError)):
+        return "retryable"
+    if isinstance(error, (ValueError, TypeError, KeyError, AttributeError)):
+        return "fatal"
+
+    return "fatal"
 
 
 def register(name, description, parameters, func, agent_only=False):
@@ -66,23 +119,42 @@ def call(name, arguments_json):
 
 
 async def async_call(name, arguments_json):
-    import asyncio
-    import inspect
+    """
+    异步调用技能，带错误分级重试。
+    可重试错误自动重试最多 _TOOL_MAX_RETRIES 次；
+    不可重试错误立即返回错误信息。
+    """
     if name not in _registry:
         return f"未知技能: {name}"
     try:
         args = json.loads(arguments_json) if arguments_json else {}
     except json.JSONDecodeError as err:
         return f"参数解析失败（模型返回了不完整的 JSON）: {err}"
-    try:
-        func = _registry[name]["func"]
-        if inspect.iscoroutinefunction(func):
-            result = await func(**args)
-        else:
-            result = await asyncio.to_thread(func, **args)
-        return str(result)
-    except Exception as err:
-        return f"技能 {name} 执行出错: {err}"
+
+    func = _registry[name]["func"]
+    last_error = None
+
+    for attempt in range(_TOOL_MAX_RETRIES + 1):
+        try:
+            if inspect.iscoroutinefunction(func):
+                result = await func(**args)
+            else:
+                result = await asyncio.to_thread(func, **args)
+            return str(result)
+        except Exception as err:
+            last_error = err
+            error_class = _classify_error(err)
+
+            if error_class == "fatal":
+                return f"技能 {name} 执行出错: {err}"
+
+            if attempt < _TOOL_MAX_RETRIES:
+                delay = _TOOL_RETRY_DELAY * (2 ** attempt)
+                await asyncio.sleep(delay)
+            else:
+                return f"技能 {name} 重试 {_TOOL_MAX_RETRIES} 次后仍失败: {err}"
+
+    return f"技能 {name} 执行出错: {last_error}"
 
 
 def _auto_load():

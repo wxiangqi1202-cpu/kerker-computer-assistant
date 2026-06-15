@@ -36,7 +36,8 @@ def create_client():
     if not api_key:
         print("未配置 API Key，请运行 kerker 进行首次配置。")
         api_key = input("API Key: ").strip()
-    return AsyncOpenAI(api_key=api_key, base_url=config.BASE_URL)
+    base_url = config.get_model_base_url()
+    return AsyncOpenAI(api_key=api_key, base_url=base_url)
 
 
 def _build_kwargs(messages):
@@ -204,10 +205,15 @@ async def send(client, messages):
     """
     异步发送消息并自动处理工具调用循环。
     通过 ProgressTracker 统一追踪所有工具和智能体执行进度。
+    通过 MetricsCollector 记录性能指标。
     """
     from core.progress import get_tracker
+    from core.metrics import get_metrics
+    import time as _time
 
     tracker = get_tracker()
+    metrics = get_metrics()
+    metrics.start_turn(model=config.MODEL)
 
     _clean_route_messages(messages)
 
@@ -221,10 +227,12 @@ async def send(client, messages):
 
     _max_rounds = 20
     _round = 0
+    _first_token_recorded = False
     while True:
         _round += 1
         if _round > _max_rounds:
             tracker.finish_all()
+            metrics.end_turn(error="max_rounds_exceeded")
             yield {"type": "done", "content": "达到最大工具调用轮次限制，已停止。", "assistant_msg": {"role": "assistant", "content": "达到最大工具调用轮次限制，已停止。"}, "usage": None}
             break
 
@@ -239,6 +247,11 @@ async def send(client, messages):
                 if isinstance(event, dict) and event.get("_result"):
                     yield_result = event["_result"]
                 else:
+                    if not _first_token_recorded and isinstance(event, dict) and event.get("type") in ("text", "thinking"):
+                        metrics.record_first_token()
+                        _first_token_recorded = True
+                    if isinstance(event, dict) and event.get("type") == "done" and event.get("usage"):
+                        metrics.record_usage(event["usage"])
                     yield event
             result = yield_result
         else:
@@ -247,11 +260,19 @@ async def send(client, messages):
                 if isinstance(event, dict) and event.get("_result"):
                     result = event["_result"]
                 else:
+                    if not _first_token_recorded and isinstance(event, dict) and event.get("type") in ("text", "thinking"):
+                        metrics.record_first_token()
+                        _first_token_recorded = True
+                    if isinstance(event, dict) and event.get("type") == "done" and event.get("usage"):
+                        metrics.record_usage(event["usage"])
                     yield event
 
         if not result or not result["tool_calls"]:
             tracker.finish_all()
+            metrics.end_turn()
             break
+
+        metrics.record_round()
 
         messages.append(result["assistant_msg"])
 
@@ -259,17 +280,45 @@ async def send(client, messages):
         agent_calls = [tc for tc in tool_calls if tc["name"].startswith("agent_")]
         other_calls = [tc for tc in tool_calls if not tc["name"].startswith("agent_")]
 
-        for tc in agent_calls:
-            agent_name = tc["name"].replace("agent_", "", 1)
-            tracker.agent_start(agent_name)
-            yield {"type": "tool_exec", "name": tc["name"], "args": tc["args"]}
-            tool_result = await skills.async_call(tc["name"], tc["args"])
-            if "执行失败" in tool_result:
-                tracker.agent_error(agent_name, error=tool_result[:100])
-            else:
-                tracker.agent_done(agent_name, summary=tool_result[:100] if tool_result else "")
-            yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
-            messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})
+        if len(agent_calls) > 1:
+            for tc in agent_calls:
+                agent_name = tc["name"].replace("agent_", "", 1)
+                tracker.agent_start(agent_name)
+                yield {"type": "tool_exec", "name": tc["name"], "args": tc["args"]}
+
+            async def _run_agent_call(tc):
+                return await skills.async_call(tc["name"], tc["args"])
+
+            agent_results = await asyncio.gather(
+                *[_run_agent_call(tc) for tc in agent_calls],
+                return_exceptions=True,
+            )
+
+            for tc, result in zip(agent_calls, agent_results):
+                agent_name = tc["name"].replace("agent_", "", 1)
+                if isinstance(result, Exception):
+                    tool_result = f"[{agent_name}] 执行失败: {str(result)[:150]}"
+                    tracker.agent_error(agent_name, error=tool_result[:100])
+                else:
+                    tool_result = result
+                    if "执行失败" in tool_result:
+                        tracker.agent_error(agent_name, error=tool_result[:100])
+                    else:
+                        tracker.agent_done(agent_name, summary=tool_result[:100] if tool_result else "")
+                yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
+                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})
+        else:
+            for tc in agent_calls:
+                agent_name = tc["name"].replace("agent_", "", 1)
+                tracker.agent_start(agent_name)
+                yield {"type": "tool_exec", "name": tc["name"], "args": tc["args"]}
+                tool_result = await skills.async_call(tc["name"], tc["args"])
+                if "执行失败" in tool_result:
+                    tracker.agent_error(agent_name, error=tool_result[:100])
+                else:
+                    tracker.agent_done(agent_name, summary=tool_result[:100] if tool_result else "")
+                yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
+                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})
 
         if other_calls and tracker.has_plan:
             tracker.advance_unbound_step()
@@ -278,7 +327,11 @@ async def send(client, messages):
             display_name = _tool_display_name(tc["name"])
             tracker.tool_start(display_name)
             yield {"type": "tool_exec", "name": tc["name"], "args": tc["args"]}
+            _tool_start = _time.time()
             tool_result = await skills.async_call(tc["name"], tc["args"])
+            _tool_duration = (_time.time() - _tool_start) * 1000
+            _tool_success = "执行出错" not in tool_result and "执行失败" not in tool_result
+            metrics.record_tool_call(tc["name"], _tool_duration, success=_tool_success)
             tracker.tool_done(display_name)
             yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})

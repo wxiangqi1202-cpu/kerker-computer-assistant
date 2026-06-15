@@ -129,6 +129,20 @@ class Config:
         self.save_user_config()
         return True
 
+    def get_model_base_url(self, model=None):
+        """获取指定模型的 base_url，支持 per-model provider 配置"""
+        model = model or self.MODEL
+        model_info = self.MODELS.get(model, {})
+        return model_info.get("base_url", self.BASE_URL)
+
+    def set_model_provider(self, model, base_url):
+        """为指定模型设置独立的 provider base_url"""
+        if model in self.MODELS:
+            self.MODELS[model]["base_url"] = base_url
+        else:
+            self.MODELS[model] = {"name": model, "base_url": base_url}
+        self.save_user_config()
+
     def load_user_config(self):
         if not os.path.isfile(self.CONFIG_FILE):
             return

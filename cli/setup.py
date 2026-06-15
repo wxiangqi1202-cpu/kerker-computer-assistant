@@ -103,9 +103,10 @@ def run_setup():
     else:
         config.apply_preset("fast")
 
-    for mid, info in config.MODELS.items():
-        if info["base_url"] != config.BASE_URL:
-            config.MODELS[mid]["base_url"] = config.BASE_URL
+    if not provider["base_url"]:
+        for mid, info in config.MODELS.items():
+            if info["base_url"] != config.BASE_URL:
+                config.MODELS[mid]["base_url"] = config.BASE_URL
 
     config.save_user_config()
 

@@ -28,6 +28,9 @@ dependencies = [
     "beautifulsoup4>=4.12",
 ]
 
+[project.optional-dependencies]
+precise = ["tiktoken>=0.5.0"]
+
 [project.scripts]
 kerker = "main:main"
 
