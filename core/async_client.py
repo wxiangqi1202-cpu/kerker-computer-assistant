@@ -256,8 +256,12 @@ def _sync_system_messages(messages, route_action=None):
 
     role_list = ", ".join(config.ROLES.keys())
     role_info = (
-        f"[已有角色] 当前: {config.CURRENT_ROLE}。可切换: {role_list}。"
-        "用户说'切换到xxx'时，应先调 switch_role 切换已有角色，不要直接创建新角色。"
+        f"[已有角色] 当前: {config.CURRENT_ROLE}。可切换: {role_list}。\n"
+        "角色操作规则（必须遵守）：\n"
+        "- 切换已有角色 → 调 switch_role\n"
+        "- 创建新角色 → 调 distill_role 提取特征，然后调 save_distilled_role 保存并切换\n"
+        "- 绝对不要直接用对话方式'扮演'角色，必须通过工具创建/切换后再以该角色身份回答\n"
+        "- 只有 save_distilled_role 成功后，角色才算真正生效"
     )
     existing = [i for i, m in enumerate(messages) if m.get("role") == "system" and m.get("content", "").startswith("[已有角色]")]
     if existing:
