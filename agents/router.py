@@ -158,12 +158,13 @@ def _check_continue(text):
 
 def route(user_input, available_agents=None, context=None):
     """
-    判定优先级:
+    混合路由策略（regex + LLM fallback）：
     1. 明确继续指令 + 有未完成规划 → 继续
-    2. 简单对话 → 直接回答（即使有未完成规划也不强制继续）
-    3. 复杂任务 / agent 关键词 → 规划或单 agent
-    4. 有未完成规划但用户发了新的复杂请求 → 新规划
-    5. 默认直接回答
+    2. 简单对话 → 直接回答
+    3. 高置信度 regex 匹配（score ≥ 3）→ 直接决策
+    4. 中等置信度（score = 2）→ 尝试 LLM intent classification
+    5. agent 关键词匹配 → 单 agent
+    6. 默认直接回答
     """
     text = user_input.strip()
 
@@ -185,7 +186,14 @@ def route(user_input, available_agents=None, context=None):
             return RouteDecision(RouteDecision.PLAN, reason="意图匹配")
 
     complexity = _calc_complexity(text)
-    if complexity >= 2:
+
+    if complexity >= 3:
+        return RouteDecision(RouteDecision.PLAN, reason=f"高置信复杂度 {complexity}")
+
+    if complexity == 2:
+        llm_decision = _llm_classify_intent(text, available_agents)
+        if llm_decision:
+            return llm_decision
         return RouteDecision(RouteDecision.PLAN, reason=f"复杂度信号 {complexity}")
 
     for agent_name, patterns in _DIRECT_AGENT_KEYWORDS.items():
@@ -200,3 +208,65 @@ def route(user_input, available_agents=None, context=None):
                 )
 
     return RouteDecision(RouteDecision.DIRECT, reason="默认直接回答")
+
+
+def _llm_classify_intent(text, available_agents=None):
+    """
+    轻量 LLM intent classification（使用 flash 模型，非流式，快速）。
+    仅在 regex 评分处于边界区域时调用，避免误分类。
+    失败时静默返回 None（fallback 到 regex 结果）。
+    """
+    from core import config as cfg
+
+    if not cfg.AUTO_ROUTE:
+        return None
+
+    try:
+        from openai import OpenAI
+        from core.credentials import load_api_key
+
+        api_key = load_api_key()
+        if not api_key:
+            return None
+
+        base_url = cfg.MODELS.get("deepseek-v4-flash", {}).get("base_url", cfg.BASE_URL)
+        client = OpenAI(api_key=api_key, base_url=base_url, timeout=3.0)
+
+        agents_list = ", ".join(available_agents) if available_agents else "planner, researcher, code_reviewer"
+
+        response = client.chat.completions.create(
+            model="deepseek-v4-flash",
+            messages=[
+                {"role": "system", "content": (
+                    "你是一个意图分类器。根据用户输入判断应该如何处理：\n"
+                    "- DIRECT: 简单问答、闲聊、单一信息查询\n"
+                    "- PLAN: 需要多步骤规划的复杂任务\n"
+                    f"- AGENT:xxx: 适合交给特定智能体处理（可选: {agents_list}）\n"
+                    "只输出一个词：DIRECT 或 PLAN 或 AGENT:名称。不要解释。"
+                )},
+                {"role": "user", "content": text[:200]},
+            ],
+            max_tokens=10,
+            stream=False,
+            temperature=0,
+        )
+
+        result = response.choices[0].message.content.strip().upper()
+
+        if result == "DIRECT":
+            return RouteDecision(RouteDecision.DIRECT, reason="LLM 判定简单任务")
+        elif result == "PLAN":
+            return RouteDecision(RouteDecision.PLAN, reason="LLM 判定多步任务")
+        elif result.startswith("AGENT:"):
+            agent_name = result.split(":", 1)[1].strip().lower()
+            if available_agents and agent_name in available_agents:
+                return RouteDecision(
+                    RouteDecision.SINGLE_AGENT,
+                    agent_name=agent_name,
+                    reason=f"LLM 指定 {agent_name}",
+                )
+
+    except Exception:
+        pass
+
+    return None
