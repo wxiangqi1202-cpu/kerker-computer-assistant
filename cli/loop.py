@@ -31,6 +31,17 @@ except Exception:
     pass
 
 
+def _print_status_bar():
+    """输入前打印一行淡色状态分隔线：模型 · 角色 · 工具数"""
+    import skills
+    model = config.MODEL
+    role = config.CURRENT_ROLE
+    tool_count = len(skills.get_skill_names())
+    bar = f"  \033[90m─── {model} · {role} · {tool_count} tools ───\033[0m"
+    sys.stdout.write(f"{bar}\n")
+    sys.stdout.flush()
+
+
 
 async def _read_multiline(session):
     """读取多行输入直到遇到结束的 \"\"\""""
@@ -172,8 +183,13 @@ async def _async_main():
         "should_exit": False,
     }
 
+    _first_prompt = True
+
     while True:
         try:
+            if not _first_prompt:
+                _print_status_bar()
+            _first_prompt = False
             user_input = (await session.prompt_async("  › ")).strip()
         except (EOFError, KeyboardInterrupt):
             _autosave(messages)
