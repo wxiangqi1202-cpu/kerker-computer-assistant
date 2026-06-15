@@ -160,10 +160,11 @@ def route(user_input, available_agents=None, context=None):
     混合路由策略（regex + LLM fallback）：
     1. 明确继续指令 + 有未完成规划 → 继续
     2. 简单对话 → 直接回答
-    3. 高置信度 regex 匹配（score ≥ 3）→ 直接决策
-    4. 中等置信度（score = 2）→ 尝试 LLM intent classification
-    5. agent 关键词匹配 → 单 agent
-    6. 默认直接回答
+    3. 强制规划模式（算子开发/调试）→ 必须走 PLAN
+    4. 高置信度 regex 匹配（score ≥ 3）→ 直接决策
+    5. 中等置信度（score = 2）→ 尝试 LLM intent classification
+    6. agent 关键词匹配 → 单 agent
+    7. 默认直接回答
     """
     text = user_input.strip()
 
@@ -179,6 +180,10 @@ def route(user_input, available_agents=None, context=None):
         pending = [s for s in steps if _is_step_pending(s)]
         if pending and _calc_complexity(text) >= 2:
             return RouteDecision(RouteDecision.PLAN, reason=f"上轮规划有 {len(pending)} 步未完成")
+
+    for pat in _FORCE_PLAN_PATTERNS:
+        if pat.search(text):
+            return RouteDecision(RouteDecision.PLAN, reason="算子任务强制规划")
 
     for pat in _INTENT_PLAN_PATTERNS:
         if pat.search(text):

@@ -94,14 +94,20 @@ def _try_auto_route(messages):
     decision = route(last_user, available, context=tracker)
 
     if decision.action == RouteDecision.PLAN:
-        return decision, [{
-            "role": "system",
-            "content": (
+        if decision.reason == "算子任务强制规划":
+            directive = (
+                "[自动路由] 检测到算子开发/调试任务。必须先调用 agent_planner 进行任务规划，"
+                "然后严格按照规划步骤逐个调用相应子智能体执行（ascend_dev / ascend_debug）。"
+                "不要跳过规划直接开发，不要一次性完成所有步骤。"
+                "每完成一个步骤等返回后再执行下一个。"
+            )
+        else:
+            directive = (
                 "[自动路由] 检测到多步骤任务。推荐调用 agent_planner 进行任务规划。"
                 "如果你选择不调 planner，也请逐个调用工具完成任务，每次只调一个工具，等返回后再调下一个。"
                 "全部完成后再给出最终总结回复。"
-            ),
-        }]
+            )
+        return decision, [{"role": "system", "content": directive}]
 
     if decision.action == RouteDecision.SINGLE_AGENT and decision.agent_name:
         return decision, [{
