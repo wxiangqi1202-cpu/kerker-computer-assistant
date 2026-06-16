@@ -18,16 +18,21 @@ KerKer 记忆系统 v2 —— BM25 + 时间衰减 + 自动分类 + 容量管理
   episodes.json  情景会话索引
 """
 
+import asyncio
 import os
 import json
 import math
 import re
+import tempfile
 import time
 import uuid
 from collections import Counter
 from datetime import datetime
 
 from core import config
+
+# ── 异步写锁（防止被动提取与主动 remember 并发写入冲突）───
+_write_lock = asyncio.Lock()
 
 # ── 目录 ─────────────────────────────────────────
 MEMORY_DIR    = os.path.join(config.KERKER_HOME, "memory")
@@ -38,6 +43,22 @@ PENDING_FILE  = os.path.join(MEMORY_DIR, "pending.json")
 
 def _ensure_dir():
     os.makedirs(MEMORY_DIR, exist_ok=True)
+
+
+def _atomic_write_json(filepath: str, data):
+    """原子写入 JSON：先写临时文件再 os.replace，防止写入中途崩溃导致数据丢失"""
+    _ensure_dir()
+    fd, tmp_path = tempfile.mkstemp(dir=MEMORY_DIR, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, filepath)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 # ── BM25 参数 ─────────────────────────────────────
@@ -293,15 +314,33 @@ class SemanticMemory:
                 print(f"[kerker] 加载语义记忆出错，已重置: {err}", file=_sys.stderr)
                 self._entries = []
         self._rebuild_index()
+        self._purge_expired_sessions()
 
     def _save(self):
-        _ensure_dir()
-        with open(SEMANTIC_FILE, "w", encoding="utf-8") as f:
-            json.dump(self._entries, f, ensure_ascii=False, indent=2)
+        _atomic_write_json(SEMANTIC_FILE, self._entries)
         self._access_dirty = False
 
     def _rebuild_index(self):
         self._bm25.update([e.get("content", "") for e in self._entries])
+
+    def _purge_expired_sessions(self):
+        """清理非当天的 session 条目，避免无效数据长期积累"""
+        today = datetime.now().date()
+        before = len(self._entries)
+        kept = []
+        for entry in self._entries:
+            if entry.get("scope") == "session":
+                try:
+                    created_date = datetime.fromisoformat(entry["created"]).date()
+                    if created_date != today:
+                        continue
+                except Exception:
+                    continue
+            kept.append(entry)
+        if len(kept) != before:
+            self._entries = kept
+            self._save()
+            self._rebuild_index()
 
     def _entry_score(self, entry: dict) -> float:
         """
@@ -331,24 +370,29 @@ class SemanticMemory:
         self._rebuild_index()
 
     def _is_conflict(self, new_content: str, old_content: str) -> bool:
-        """三层冲突检测：谓词结构 → 词级重叠 → 字符 bigram"""
+        """三层冲突检测：谓词结构 → 词级重叠 → 字符 bigram
+        短文本（< 15 字）使用更严格的阈值，避免误判覆盖。
+        """
         new_pred = _extract_predicate(new_content)
         old_pred = _extract_predicate(old_content)
         if new_pred and old_pred:
             if new_pred[0] == old_pred[0] and new_pred[1] != old_pred[1]:
                 return True
 
+        is_short = max(len(new_content), len(old_content)) < 15
+        overlap_threshold = 0.8 if is_short else 0.6
+
         def words(s):
             return set(s.lower().replace("：", " ").replace(":", " ").split())
         nw, ow = words(new_content), words(old_content)
-        if nw and ow and len(nw & ow) / max(len(nw), len(ow)) >= 0.6:
+        if nw and ow and len(nw & ow) / max(len(nw), len(ow)) >= overlap_threshold:
             return True
 
         def bigrams(s):
             s = s.lower()
             return set(zip(s, s[1:]))
         nb, ob = bigrams(new_content), bigrams(old_content)
-        if nb and ob and len(nb & ob) / max(len(nb), len(ob)) >= 0.6:
+        if nb and ob and len(nb & ob) / max(len(nb), len(ob)) >= overlap_threshold:
             return True
 
         return False
@@ -478,7 +522,7 @@ class SemanticMemory:
             results.append(entry)
 
         if results and update_access:
-            self._access_dirty = True
+            self._save()
         return results
 
     def get_all(self) -> list:
@@ -555,6 +599,8 @@ class SemanticMemory:
 
                 old_count  = len(targets[:15])
                 remove_ids = {e["id"] for e in targets[:15]}          # O(1) hash lookup
+                ns_counts = Counter(e.get("namespace", "global") for e in targets[:15])
+                dominant_ns = ns_counts.most_common(1)[0][0] if ns_counts else "global"
                 self._entries = [e for e in self._entries
                                  if e["id"] not in remove_ids]        # O(N) not O(N^2)
                 now = datetime.now().isoformat()
@@ -566,7 +612,7 @@ class SemanticMemory:
                         "tags":         [category],
                         "category":     category,
                         "scope":        "persistent",
-                        "namespace":    "global",
+                        "namespace":    dominant_ns,
                         "importance":   max(1, min(10, int(item.get("importance", 7)))),
                         "created":      now, "updated": now, "last_accessed": now,
                         "access_count": 0,
@@ -657,9 +703,7 @@ class EpisodicMemory:
         self._rebuild_index()
 
     def _save(self):
-        _ensure_dir()
-        with open(EPISODES_FILE, "w", encoding="utf-8") as f:
-            json.dump(self._episodes, f, ensure_ascii=False, indent=2)
+        _atomic_write_json(EPISODES_FILE, self._episodes)
 
     def _rebuild_index(self):
         docs = [
@@ -803,9 +847,7 @@ class PendingMemory:
                 self._pending = []
 
     def _save(self):
-        _ensure_dir()
-        with open(PENDING_FILE, "w", encoding="utf-8") as f:
-            json.dump(self._pending, f, ensure_ascii=False, indent=2)
+        _atomic_write_json(PENDING_FILE, self._pending)
 
     def _expire_old(self):
         cutoff = time.time() - self._EXPIRE_DAYS * 86400

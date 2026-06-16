@@ -83,6 +83,9 @@ def _should_extract(text: str) -> bool:
 _EXTRACT_PROMPT = """\
 从用户消息中提取隐含的个人信息。
 
+对话上下文（辅助理解指代）：
+{context}
+
 提取范围：
   ✅ 个人偏好（喜欢/讨厌/擅长）
   ✅ 使用习惯（工具/框架/工作方式）
@@ -112,9 +115,10 @@ _EXTRACT_PROMPT = """\
 
 # ── 主提取函数 ────────────────────────────────────────────────
 
-async def extract_and_save(user_message: str) -> list:
+async def extract_and_save(user_message: str, context_messages: list = None) -> list:
     """
     被动提取入口。完全静默，任何异常直接返回 []。
+    context_messages: 最近 1-2 轮的对话消息列表，帮助理解指代和省略。
     返回值仅供调试，正常使用无需关心。
     """
     from core import config
@@ -137,12 +141,25 @@ async def extract_and_save(user_message: str) -> list:
             base_url=config.get_model_base_url("deepseek-v4-flash"),
         )
 
+        context_str = "无"
+        if context_messages:
+            ctx_lines = []
+            for msg in context_messages[-4:]:
+                role = msg.get("role", "")
+                content = (msg.get("content") or "")[:200]
+                if role in ("user", "assistant") and content:
+                    label = "用户" if role == "user" else "助手"
+                    ctx_lines.append(f"{label}: {content}")
+            if ctx_lines:
+                context_str = "\n".join(ctx_lines)
+
         resp = await client.chat.completions.create(
             model="deepseek-v4-flash",
             messages=[
                 {"role": "system", "content": "信息提取助手，只输出JSON数组。"},
                 {"role": "user", "content": _EXTRACT_PROMPT.format(
-                    message=user_message[:600]
+                    message=user_message[:600],
+                    context=context_str,
                 )},
             ],
             stream=False,
@@ -158,6 +175,8 @@ async def extract_and_save(user_message: str) -> list:
         if not isinstance(items, list):
             return []
 
+        from core.memory import get_semantic, _write_lock
+
         sem   = get_semantic()
         pend  = None
         from core import config as _cfg
@@ -167,23 +186,24 @@ async def extract_and_save(user_message: str) -> list:
 
         saved = []
         cats_updated: set = set()
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            content    = item.get("content", "").strip()
-            importance = int(item.get("importance", 5))
-            category   = item.get("category", "事实")
-            if not content or importance < 4:
-                continue
-            if pend is not None:
-                pend.add(content=content, source="passive",
-                         tags=[category], importance=importance, category=category)
-            else:
-                entry = sem.add(content=content, source="passive",
-                                tags=[category], importance=importance)
-                if entry:
-                    saved.append(entry)
-                    cats_updated.add(entry.get("category", "事实"))
+        async with _write_lock:
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                content    = item.get("content", "").strip()
+                importance = int(item.get("importance", 5))
+                category   = item.get("category", "事实")
+                if not content or importance < 4:
+                    continue
+                if pend is not None:
+                    pend.add(content=content, source="passive",
+                             tags=[category], importance=importance, category=category)
+                else:
+                    entry = sem.add(content=content, source="passive",
+                                    tags=[category], importance=importance)
+                    if entry:
+                        saved.append(entry)
+                        cats_updated.add(entry.get("category", "事实"))
 
         # 后台触发记忆合并（只统计非 session 条目，过期 session 不计入阈值）
         import asyncio as _aio

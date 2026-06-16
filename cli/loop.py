@@ -312,7 +312,8 @@ async def _async_main():
                 ctx["messages"] = messages
                 # 后台静默提取：不阻塞主流程，用户无感知
                 if reply and not user_input.startswith("/"):
-                    asyncio.create_task(_passive_extract(user_input))
+                    recent_ctx = [m for m in messages if m.get("role") in ("user", "assistant")][-4:]
+                    asyncio.create_task(_passive_extract(user_input, recent_ctx))
 
         except asyncio.CancelledError:
             spinner.stop()
@@ -340,11 +341,11 @@ async def _async_main():
                 _console.print("  [dim]如果持续出错，试试 /clear 清空对话或 /fast 切换模式[/dim]")
 
 
-async def _passive_extract(user_input: str):
+async def _passive_extract(user_input: str, context_messages: list = None):
     """后台静默提取任务，完全异步，任何异常静默丢弃。"""
     try:
         from core.extractor import extract_and_save
-        await extract_and_save(user_input)
+        await extract_and_save(user_input, context_messages=context_messages)
     except Exception:
         pass
 
