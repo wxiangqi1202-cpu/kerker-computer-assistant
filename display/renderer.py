@@ -34,8 +34,8 @@ def _format_stats(usage, timer):
 
 
 def _tool_tip(tool_name):
-    from core.async_client import _tool_display_name
-    display = _tool_display_name(tool_name)
+    from core.context import tool_display_name
+    display = tool_display_name(tool_name)
     return [f"{display}..."]
 
 

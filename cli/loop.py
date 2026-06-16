@@ -8,7 +8,9 @@ import skills
 from rich.console import Console
 
 from core import config
-from core.async_client import create_client, send
+from core.client import create_client
+from core.turn import send
+from core.context import build_rounds_summary
 from core.history import ensure_dirs
 from core import history
 from core.tokens import count_tokens, count_message_tokens
@@ -44,35 +46,6 @@ def _print_status_bar(messages=None):
         messages,
     )
 
-
-def _build_rounds_summary(messages_full, messages_backup):
-    """
-    轮次超限时，从已执行的 messages 中提取执行摘要注入到回滚后的上下文，
-    让 LLM 知道之前做了什么，再次继续时有进度参考。
-    """
-    new_messages = messages_full[len(messages_backup):]
-    if not new_messages:
-        return ""
-
-    lines = ["[执行摘要 - 上轮因轮次超限中断，以下为已完成的工作]"]
-    tool_count = 0
-    for msg in new_messages:
-        role = msg.get("role", "")
-        content = msg.get("content", "") or ""
-        if role == "tool" and content:
-            tool_count += 1
-            first_line = content.split("\n")[0][:80]
-            lines.append(f"  工具结果 {tool_count}: {first_line}")
-        elif role == "assistant" and msg.get("tool_calls"):
-            for tc in msg["tool_calls"]:
-                name = tc.get("function", {}).get("name", "")
-                if name:
-                    lines.append(f"  调用了: {name}")
-
-    if len(lines) <= 1:
-        return ""
-    lines.append("请根据以上进度继续完成任务。")
-    return "\n".join(lines[:20])
 
 
 def _model_short_name(model_id):
@@ -189,12 +162,16 @@ def _trim_context(messages):
 
 
 def _autosave(messages):
-    """退出前自动保存当前对话 + 索引情景记忆"""
+    """退出前自动保存当前对话 + 索引情景记忆。任何 IO 失败静默处理，确保退出路径干净。"""
     non_system = [m for m in messages if m["role"] != "system"]
-    if non_system:
-        filepath = history.save(messages, "_autosave.json")
+    if not non_system:
+        return
+    try:
+        history.save(messages, "_autosave.json")
         from core.memory import get_episodic
         get_episodic().add_episode(messages, filename="_autosave.json")
+    except Exception:
+        pass   # 磁盘满/权限问题不能阻止正常退出
 
 
 async def _async_main():
@@ -320,7 +297,7 @@ async def _async_main():
                 messages.extend(messages_backup)
                 ctx["messages"] = messages
             elif max_rounds_hit:
-                _summary = _build_rounds_summary(messages, messages_backup)
+                _summary = build_rounds_summary(messages, messages_backup)
                 messages.clear()
                 messages.extend(messages_backup)
                 if _summary:

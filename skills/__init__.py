@@ -156,15 +156,11 @@ def get_filtered_tool_specs(role_name=None, user_input=None, route_action=None):
     按角色和上下文过滤工具列表。
 
     策略：
-    - DIRECT route: 不返回工具（简单问候不需要）
+    - 所有路由（含 DIRECT）都保留工具能力，LLM 始终可以调用工具
     - 按角色获取基础工具集
     - 按用户输入关键词动态追加相关工具
-    - 始终包含 agent 类工具（LLM 需要自主决定是否调 planner）
     """
     import re
-
-    if route_action == "direct":
-        return []
 
     from core import config as cfg
     role = role_name or cfg.CURRENT_ROLE

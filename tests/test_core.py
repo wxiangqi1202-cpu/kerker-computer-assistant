@@ -27,9 +27,10 @@ class TestRouter(unittest.TestCase):
         d = self.route("hi")
         self.assertEqual(d.action, self.RouteDecision.DIRECT)
 
-    def test_ok_response_is_direct(self):
+    def test_ok_response_is_pass_through(self):
+        # "ok" 没有活跃计划时为 pass_through（LLM 判断）
         d = self.route("ok")
-        self.assertEqual(d.action, self.RouteDecision.DIRECT)
+        self.assertEqual(d.action, self.RouteDecision.PASS_THROUGH)
 
     def test_ascend_task_triggers_plan(self):
         d = self.route("帮我写一个 AscendC 算子实现 ReLU")
@@ -43,9 +44,10 @@ class TestRouter(unittest.TestCase):
         d = self.route("帮我审查一下这段代码")
         self.assertEqual(d.action, self.RouteDecision.PASS_THROUGH)
 
-    def test_continue_without_plan_is_direct(self):
+    def test_continue_without_plan_is_pass_through(self):
+        # 没有活跃计划时，"继续" 交给 LLM 判断（pass_through）
         d = self.route("继续")
-        self.assertEqual(d.action, self.RouteDecision.DIRECT)
+        self.assertEqual(d.action, self.RouteDecision.PASS_THROUGH)
 
     def test_clear_plan_set_on_new_topic_with_active_plan(self):
         class FakePlan:
