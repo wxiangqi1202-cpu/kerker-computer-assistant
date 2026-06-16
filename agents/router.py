@@ -43,6 +43,13 @@ _SIMPLE_PATTERNS = [
     re.compile(r"^(几点|时间|天气|日期|time|weather|date)\b", _I),
 ]
 
+_TOOL_INTENT_PATTERNS = re.compile(
+    r"(切换|换成|用|扮演|变成|成为|switch|use|become|act as).{0,8}"
+    r"(角色|模式|翻译|代码|写作|助手|role|mode|translator|coder)"
+    r"|创建|蒸馏|生成.*角色|记住|忘记|搜索|查一下|发送|发到",
+    _I,
+)
+
 _CONTINUE_PATTERNS = [
     re.compile(r"^(好的|ok|开始|继续|执行|go|来吧|干吧|开搞|走起|开始吧|那就).{0,10}$", _I),
     re.compile(r"^(按照|按|根据).{0,8}(方案|规划|计划|步骤|执行|做|来)"),
@@ -87,6 +94,8 @@ def route(user_input, available_agents=None, context=None):
 
     for pat in _SIMPLE_PATTERNS:
         if pat.search(text):
+            if _TOOL_INTENT_PATTERNS.search(text):
+                break
             if has_active_plan:
                 return RouteDecision(RouteDecision.DIRECT, reason="简单对话，清除旧规划",
                                      _clear_plan=True)
@@ -97,8 +106,6 @@ def route(user_input, available_agents=None, context=None):
             return RouteDecision(RouteDecision.PLAN, reason="算子任务强制规划")
 
     if has_active_plan:
-        if _check_continue(text):
-            return RouteDecision(RouteDecision.PLAN, reason="继承上轮规划")
         return RouteDecision(RouteDecision.PASS_THROUGH, reason="有旧规划但新话题",
                              _clear_plan=True)
 
