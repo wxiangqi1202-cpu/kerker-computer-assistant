@@ -275,11 +275,13 @@ class ProgressTracker:
             if self._steps and not self._finished:
                 all_done = all(s.status in (StepStatus.DONE, StepStatus.ERROR) for s in self._steps)
                 if all_done:
-                    self._steps.append(ProgressStep(
-                        name="生成总结",
-                        status=StepStatus.RUNNING,
-                        started_at=time.time(),
-                    ))
+                    already_has_summary = any(s.name == "生成总结" for s in self._steps)
+                    if not already_has_summary:
+                        self._steps.append(ProgressStep(
+                            name="生成总结",
+                            status=StepStatus.RUNNING,
+                            started_at=time.time(),
+                        ))
 
     def complete_unbound_step(self):
         """

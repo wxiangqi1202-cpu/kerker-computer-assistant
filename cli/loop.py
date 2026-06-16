@@ -31,11 +31,21 @@ except Exception:
     pass
 
 
+def _print_status_bar():
+    """输入前打印一行淡色状态分隔线：模型 · 角色 · 工具数"""
+    import skills
+    model = config.MODEL
+    role = config.CURRENT_ROLE
+    tool_count = len(skills.get_skill_names())
+    bar = f"  \033[90m─── {model} · {role} · {tool_count} tools ───\033[0m"
+    sys.stdout.write(f"{bar}\n")
+    sys.stdout.flush()
+
+
 def _build_rounds_summary(messages_full, messages_backup):
     """
-    轮次超限时，从已执行的 messages 中提取执行摘要，
-    作为 system message 注入到回滚后的 messages 中，
-    让 LLM 知道之前做了什么，再次继续时有上下文。
+    轮次超限时，从已执行的 messages 中提取执行摘要注入到回滚后的上下文，
+    让 LLM 知道之前做了什么，再次继续时有进度参考。
     """
     new_messages = messages_full[len(messages_backup):]
     if not new_messages:
@@ -60,14 +70,6 @@ def _build_rounds_summary(messages_full, messages_backup):
         return ""
     lines.append("请根据以上进度继续完成任务。")
     return "\n".join(lines[:20])
-    """输入前打印一行淡色状态分隔线：模型 · 角色 · 工具数"""
-    import skills
-    model = config.MODEL
-    role = config.CURRENT_ROLE
-    tool_count = len(skills.get_skill_names())
-    bar = f"  \033[90m─── {model} · {role} · {tool_count} tools ───\033[0m"
-    sys.stdout.write(f"{bar}\n")
-    sys.stdout.flush()
 
 
 def _model_short_name(model_id):

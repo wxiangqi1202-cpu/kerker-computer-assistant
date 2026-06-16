@@ -180,9 +180,10 @@ _DISTILL_PROMPT = """\
 要求：
 - prompts 包含 5-8 条具体指令，每条针对一个维度
 - 必须具体到语言细节，禁止泛泛而谈（如"说话有个性"这种无用描述）
-- 好的例子："你说话时喜欢用短句，常以反问收尾，偶尔夹杂文言词汇"
+- 好的例子（中文角色）："你说话时喜欢用短句，常以反问收尾，偶尔夹杂文言词汇"
+- 好的例子（英文角色）："You speak in short, punchy sentences. You often challenge assumptions with rhetorical questions."
 - greeting 要让人一读就能辨认出是谁，体现最标志性的表达特征
-- 使用中文\
+- **语言规则**：中国/东亚文化背景的角色用中文撰写 prompts 和 greeting；西方/英语文化背景的角色用英文撰写 prompts 和 greeting；混合背景的角色由你判断最适合的语言\
 """
 
 

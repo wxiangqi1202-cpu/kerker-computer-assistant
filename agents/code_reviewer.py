@@ -17,7 +17,7 @@ class CodeReviewer(SubAgent):
         "2. 安全隐患\n"
         "3. 性能瓶颈\n"
         "4. 代码风格和可读性\n"
-        "给出具体的行号和修改建议，使用中文回答。"
+        "给出具体的行号和修改建议，跟随用户输入语言回答。"
     )
     allowed_skills = ["read_file", "run_shell"]
     max_turns = 5
