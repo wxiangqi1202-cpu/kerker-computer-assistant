@@ -71,6 +71,7 @@ class Config:
     _BUILTIN_ROLES = None
     _PERSIST_KEYS = ("MODEL", "CURRENT_ROLE", "STREAM", "REASONING_EFFORT",
                      "ENABLE_THINKING", "MAX_CONTEXT_MESSAGES", "AUTO_ROUTE",
+                     "PASSIVE_MEMORY", "MEMORY_CONFIRM", "CURRENT_NAMESPACE",
                      "ALLOW_SHELL", "STATUSBAR_STYLE")
 
     def __init__(self):
@@ -81,8 +82,11 @@ class Config:
         self.ENABLE_THINKING = False
         self.MAX_TOKENS = None
         self.MAX_CONTEXT_MESSAGES = 40
-        self.AUTO_ROUTE = True
-        self.ALLOW_SHELL = True
+        self.AUTO_ROUTE        = True
+        self.PASSIVE_MEMORY    = True   # 被动记忆提取
+        self.MEMORY_CONFIRM    = False  # True=被动记忆先进待确认队列
+        self.CURRENT_NAMESPACE = "global"  # 当前项目命名空间
+        self.ALLOW_SHELL       = True
         self.STATUSBAR_STYLE = "a"
         self.CURRENT_ROLE = "默认"
         self.ROLES = self._build_default_roles()
@@ -176,6 +180,12 @@ class Config:
                 self.MAX_CONTEXT_MESSAGES = int(data["MAX_CONTEXT_MESSAGES"])
             if "AUTO_ROUTE" in data:
                 self.AUTO_ROUTE = bool(data["AUTO_ROUTE"])
+            if "PASSIVE_MEMORY" in data:
+                self.PASSIVE_MEMORY = bool(data["PASSIVE_MEMORY"])
+            if "MEMORY_CONFIRM" in data:
+                self.MEMORY_CONFIRM = bool(data["MEMORY_CONFIRM"])
+            if "CURRENT_NAMESPACE" in data:
+                self.CURRENT_NAMESPACE = str(data["CURRENT_NAMESPACE"]) or "global"
             if "ALLOW_SHELL" in data:
                 self.ALLOW_SHELL = bool(data["ALLOW_SHELL"])
             if data.get("STATUSBAR_STYLE") in ("a", "b", "c", "d", "e", "f", "g", "h"):

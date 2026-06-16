@@ -511,13 +511,14 @@ def cmd_clear(args, ctx):
     _console.print("  [green]✓ 对话已清空[/green]")
 
 
-@command("/memory", "查看/管理记忆")
+@command("/memory", "查看/管理记忆（支持 pending/approve/reject/compress/stats）")
 def cmd_memory(args, ctx):
-    from core.memory import get_semantic, get_episodic
-    sem = get_semantic()
+    from core.memory import get_semantic, get_pending
+    sem  = get_semantic()
+    pend = get_pending()
+    arg  = args.strip()
 
-    arg = args.strip()
-
+    # ── clear ─────────────────────────────────────
     if arg == "clear":
         try:
             confirm = input("  确认清空所有记忆? (y/N): ").strip().lower()
@@ -529,19 +530,126 @@ def cmd_memory(args, ctx):
             _console.print("  [green]✓ 记忆已清空[/green]")
         return
 
+    # ── pending（待确认队列）─────────────────────────
+    if arg == "pending":
+        if pend.count() == 0:
+            _console.print("  [dim]待确认队列为空。/config memory_confirm true 开启确认模式[/dim]")
+        else:
+            _console.print(f"\n{pend.format_preview()}\n")
+            _console.print("  [dim]/memory approve  全部接受 · /memory approve <id>  接受单条[/dim]")
+            _console.print("  [dim]/memory reject   全部拒绝 · /memory reject  <id>  拒绝单条[/dim]")
+        return
+
+    # ── approve ───────────────────────────────────
+    if arg.startswith("approve"):
+        pid = arg[7:].strip() or None
+        n   = pend.approve(pid)
+        _console.print(f"  [green]✓ 已接受 {n} 条记忆[/green]" if n else "  [dim]没有匹配的待确认记忆[/dim]")
+        return
+
+    # ── reject ────────────────────────────────────
+    if arg.startswith("reject"):
+        pid = arg[6:].strip() or None
+        n   = pend.reject(pid)
+        _console.print(f"  [green]✓ 已拒绝 {n} 条记忆[/green]" if n else "  [dim]没有匹配的待确认记忆[/dim]")
+        return
+
+    # ── compress（手动触发合并）─────────────────────
+    if arg.startswith("compress"):
+        cat = arg[8:].strip() or None
+        import asyncio
+        async def _run():
+            from core.memory import _CONSOLIDATE_THRESHOLD
+            categories = [cat] if cat else list({e.get("category","事实") for e in sem.get_all()})
+            total = 0
+            for c in categories:
+                n = await sem.consolidate_category_async(c)
+                total += n
+            return total
+        try:
+            reduced = asyncio.get_event_loop().run_until_complete(_run())
+            _console.print(f"  [green]✓ 合并完成，减少 {reduced} 条冗余记忆[/green]")
+        except Exception as err:
+            _console.print(f"  [red]合并失败: {err}[/red]")
+        return
+
+    # ── stats ─────────────────────────────────────
+    if arg == "stats":
+        s = sem.stats()
+        _console.print(f"\n  [cyan]记忆统计[/cyan]")
+        _console.print(f"  总计: {s['total']}/{s['max']}  平均重要度: {s['avg_importance']:.1f}")
+        _console.print(f"  待确认: {pend.count()} 条")
+        _console.print(f"  按类别: {s['by_category']}\n")
+        return
+
+    # ── 默认：列表视图 ────────────────────────────────
     entries = sem.get_all()
-    if not entries:
+    if not entries and pend.count() == 0:
         _console.print("  [dim]还没有记忆。在对话中说'记住xxx'来添加。[/dim]")
         return
 
-    _console.print(f"\n  [cyan]记忆 ({len(entries)} 条)[/cyan]\n")
-    for e in entries:
-        importance = e.get("importance", 5)
-        source = e.get("source", "auto")
-        marker = "★" if importance >= 8 else "·"
-        src_tag = f" [dim]({source})[/dim]" if source != "auto" else ""
-        _console.print(f"  {marker} {e['content']}{src_tag}")
-    _console.print(f"\n  [dim]使用 /memory clear 清空，或在对话中说'忘掉xxx'删除单条[/dim]\n")
+    # 按来源分组
+    explicit_src = {"user", "approved", "consolidated"}
+    user_entries    = [e for e in entries if e.get("source") in explicit_src]
+    passive_entries = [e for e in entries if e.get("source") == "passive"]
+
+    ns = config.CURRENT_NAMESPACE
+    _console.print(f"\n  [cyan]记忆 ({len(entries)} 条)[/cyan]  "
+                   f"[dim]命名空间: {ns}  待确认: {pend.count()}[/dim]\n")
+
+    if user_entries:
+        _console.print("  [dim]── 主动 & 合并记忆 ──────────────[/dim]")
+        for e in user_entries:
+            imp    = e.get("importance", 5)
+            marker = "★" if imp >= 8 else ("◈" if e.get("source") == "consolidated" else "·")
+            ns_tag = f" [dim]({e.get('namespace','global')})[/dim]" if e.get("namespace","global") != "global" else ""
+            cat    = e.get("category", "")
+            _console.print(f"  {marker} {e['content']} [dim][{cat}]{ns_tag}[/dim]")
+
+    if passive_entries:
+        _console.print()
+        _console.print("  [dim]── 感知记忆（自动提取） ────────[/dim]")
+        for e in passive_entries:
+            imp    = e.get("importance", 5)
+            marker = "◆" if imp >= 7 else "◇"
+            cat    = e.get("category", "")
+            _console.print(f"  {marker} {e['content']} [dim][{cat}][/dim]")
+
+    _console.print(
+        f"\n  [dim]主动: {len(user_entries)}  感知: {len(passive_entries)}  "
+        f"待确认: {pend.count()}  容量: {len(entries)}/500[/dim]"
+    )
+    _console.print("  [dim]/memory pending · approve · reject · compress · stats · clear[/dim]\n")
+
+
+@command("/project", "切换 / 查看项目命名空间")
+def cmd_project(args, ctx):
+    from core.memory import detect_namespace_from_cwd
+    arg = args.strip()
+
+    if not arg:
+        ns   = config.CURRENT_NAMESPACE
+        from core.memory import get_semantic
+        known = sorted({e.get("namespace", "global") for e in get_semantic().get_all()})
+        _console.print(f"\n  [cyan]当前命名空间: {ns}[/cyan]")
+        if known:
+            _console.print(f"  已有命名空间: {', '.join(known)}")
+        _console.print("  [dim]/project <名称>    切换到指定命名空间[/dim]")
+        _console.print("  [dim]/project auto      从 git 仓库名自动检测[/dim]")
+        _console.print("  [dim]/project global    切回全局命名空间[/dim]\n")
+        return
+
+    if arg == "auto":
+        ns = detect_namespace_from_cwd()
+    else:
+        ns = arg
+
+    config.CURRENT_NAMESPACE = ns
+    config.save_user_config()
+    _console.print(f"  [green]✓ 命名空间切换到: {ns}[/green]")
+    if ns != "global":
+        _console.print("  [dim]被动记忆将存入此命名空间，全局记忆（global）仍始终可见[/dim]")
+
 
 
 @command("/exit", "退出程序")
@@ -656,8 +764,10 @@ def cmd_config(args, ctx):
         "thinking": ("ENABLE_THINKING", bool, "深度思考"),
         "effort": ("REASONING_EFFORT", str, "推理努力 low/medium/high"),
         "context": ("MAX_CONTEXT_MESSAGES", int, "上下文消息上限"),
-        "autoroute": ("AUTO_ROUTE", bool, "自动路由（智能判断是否规划）"),
-        "shell":     ("ALLOW_SHELL", bool, "允许 LLM 执行 shell 命令"),
+        "autoroute": ("AUTO_ROUTE",     bool, "自动路由（智能判断是否规划）"),
+        "passive":        ("PASSIVE_MEMORY", bool, "被动记忆（无感知提取用户习惯/偏好）"),
+        "memory_confirm": ("MEMORY_CONFIRM",  bool, "记忆确认模式（被动提取先进待确认队列）"),
+        "shell":          ("ALLOW_SHELL",     bool, "允许 LLM 执行 shell 命令"),
     }
     if args.strip():
         parts = args.strip().split(maxsplit=1)

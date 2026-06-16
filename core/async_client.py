@@ -249,8 +249,9 @@ def _sync_system_messages(messages, route_action=None):
         content = m["content"]
         if content.startswith("[自动路由]") or content.startswith("[已有角色]"):
             continue
-        if any(content.startswith(p) for p in ("[当前系统可用工具]", "[以下是更早", "[用户记忆]", "[近期对话摘要]")):
+        if any(content.startswith(p) for p in ("[当前系统可用工具]", "[以下是更早", "[近期对话摘要]")):
             env_msgs.append(m)
+        # [用户记忆] 不再静态保留，由下方动态检索替代
         else:
             old_role_contents.add(content)
 
@@ -279,6 +280,39 @@ def _sync_system_messages(messages, route_action=None):
             if m["role"] == "system":
                 system_end = i + 1
         messages.insert(system_end, {"role": "system", "content": role_info})
+
+    # ── 动态记忆注入 ──────────────────────────────────────────
+    # 每轮基于最新用户输入检索相关记忆，替代静态 top-N 注入：
+    # - 只注入与当前问题相关的记忆，避免无关记忆浪费 context token
+    # - update_access=False：动态注入属于只读查询，不计入访问频率
+    user_msgs_in_ctx = [m for m in messages if m.get("role") == "user"]
+    if user_msgs_in_ctx:
+        last_q = user_msgs_in_ctx[-1].get("content", "")
+        # 先清除旧的动态记忆块（保持幂等）
+        messages[:] = [
+            m for m in messages
+            if not (m["role"] == "system" and
+                    any(m.get("content", "").startswith(p)
+                        for p in ("[相关记忆]", "[用户记忆]")))
+        ]
+        if last_q and len(last_q) >= 6:
+            from core.memory import get_semantic
+            relevant = get_semantic().search(last_q, limit=5, update_access=False)
+            if relevant:
+                grouped: dict = {}
+                for e in relevant:
+                    grouped.setdefault(e.get("category", "事实"), []).append(e["content"])
+                lines = ["[相关记忆]"]
+                for cat, items in grouped.items():
+                    lines.append(f"  [{cat}]")
+                    for item in items:
+                        lines.append(f"  - {item}")
+                mem_block = "\n".join(lines)
+                last_sys = max(
+                    (i for i, m in enumerate(messages) if m["role"] == "system"),
+                    default=-1,
+                )
+                messages.insert(last_sys + 1, {"role": "system", "content": mem_block})
 
 
 def _clean_route_messages(messages):

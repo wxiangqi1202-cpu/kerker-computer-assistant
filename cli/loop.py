@@ -222,10 +222,9 @@ async def _async_main():
     if env_prompt:
         messages.append({"role": "system", "content": env_prompt})
 
-    from core.memory import get_semantic, get_episodic
-    sem_prompt = get_semantic().format_for_prompt(limit=8)
-    if sem_prompt:
-        messages.append({"role": "system", "content": sem_prompt})
+    from core.memory import get_episodic
+    # 语义记忆改为动态注入（_sync_system_messages 中按每轮问题检索），
+    # 此处只注入情景摘要（会话背景，不依赖当前问题）
     epi_prompt = get_episodic().format_recent_for_prompt(limit=3)
     if epi_prompt:
         messages.append({"role": "system", "content": epi_prompt})
@@ -334,6 +333,9 @@ async def _async_main():
                 elif reply:
                     messages.append({"role": "assistant", "content": reply})
                 ctx["messages"] = messages
+                # 后台静默提取：不阻塞主流程，用户无感知
+                if reply and not user_input.startswith("/"):
+                    asyncio.create_task(_passive_extract(user_input))
 
         except asyncio.CancelledError:
             spinner.stop()
@@ -359,6 +361,15 @@ async def _async_main():
                 short = err_str[:120] + "..." if len(err_str) > 120 else err_str
                 _console.print(f"\n   [red]出错: {short}[/red]")
                 _console.print("  [dim]如果持续出错，试试 /clear 清空对话或 /fast 切换模式[/dim]")
+
+
+async def _passive_extract(user_input: str):
+    """后台静默提取任务，完全异步，任何异常静默丢弃。"""
+    try:
+        from core.extractor import extract_and_save
+        await extract_and_save(user_input)
+    except Exception:
+        pass
 
 
 def main():
