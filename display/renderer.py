@@ -54,6 +54,7 @@ async def render(event_stream, spinner=None, taskboard=None):
     reply = ""
     assistant_msg = None
     receiving_text = False
+    max_rounds_hit = False
 
     cancel_task = None
 
@@ -95,6 +96,9 @@ async def render(event_stream, spinner=None, taskboard=None):
                 assistant_msg = event.get("assistant_msg")
                 usage = event.get("usage")
                 stats = _format_stats(usage, timer)
+                if event.get("_max_rounds_hit"):
+                    nonlocal max_rounds_hit
+                    max_rounds_hit = True
 
                 if taskboard:
                     from core.progress import get_tracker
@@ -168,7 +172,7 @@ async def render(event_stream, spinner=None, taskboard=None):
                 spinner.stop()
                 agents.clear_plan()
 
-    return reply, assistant_msg
+    return reply, assistant_msg, max_rounds_hit
 
 
 async def _watch_interrupt(spinner, target_task):

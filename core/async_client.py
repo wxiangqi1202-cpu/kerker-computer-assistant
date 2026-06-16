@@ -310,7 +310,7 @@ async def send(client, messages):
             for msg in route_msgs:
                 messages.append(msg)
 
-    _max_rounds = 20
+    _max_rounds = 40
     _round = 0
     _first_token_recorded = False
     _kwargs_cache = None
@@ -319,7 +319,13 @@ async def send(client, messages):
         if _round > _max_rounds:
             tracker.finish_all()
             metrics.end_turn(error="max_rounds_exceeded")
-            yield {"type": "done", "content": "达到最大工具调用轮次限制，已停止。", "assistant_msg": {"role": "assistant", "content": "达到最大工具调用轮次限制，已停止。"}, "usage": None}
+            yield {
+                "type": "done",
+                "content": "达到最大工具调用轮次限制，已停止。",
+                "assistant_msg": {"role": "assistant", "content": "达到最大工具调用轮次限制，已停止。"},
+                "usage": None,
+                "_max_rounds_hit": True,
+            }
             break
 
         tracker.ensure_step_active()

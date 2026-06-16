@@ -31,7 +31,35 @@ except Exception:
     pass
 
 
-def _print_status_bar():
+def _build_rounds_summary(messages_full, messages_backup):
+    """
+    轮次超限时，从已执行的 messages 中提取执行摘要，
+    作为 system message 注入到回滚后的 messages 中，
+    让 LLM 知道之前做了什么，再次继续时有上下文。
+    """
+    new_messages = messages_full[len(messages_backup):]
+    if not new_messages:
+        return ""
+
+    lines = ["[执行摘要 - 上轮因轮次超限中断，以下为已完成的工作]"]
+    tool_count = 0
+    for msg in new_messages:
+        role = msg.get("role", "")
+        content = msg.get("content", "") or ""
+        if role == "tool" and content:
+            tool_count += 1
+            first_line = content.split("\n")[0][:80]
+            lines.append(f"  工具结果 {tool_count}: {first_line}")
+        elif role == "assistant" and msg.get("tool_calls"):
+            for tc in msg["tool_calls"]:
+                name = tc.get("function", {}).get("name", "")
+                if name:
+                    lines.append(f"  调用了: {name}")
+
+    if len(lines) <= 1:
+        return ""
+    lines.append("请根据以上进度继续完成任务。")
+    return "\n".join(lines[:20])
     """输入前打印一行淡色状态分隔线：模型 · 角色 · 工具数"""
     import skills
     model = config.MODEL
@@ -283,11 +311,19 @@ async def _async_main():
             messages_backup = list(messages)
             spinner.update(tips=CONNECTING_TIPS)
             event_stream = send(api_client, messages)
-            reply, assistant_msg = await render(event_stream, spinner=spinner, taskboard=taskboard)
+            reply, assistant_msg, max_rounds_hit = await render(event_stream, spinner=spinner, taskboard=taskboard)
 
             if spinner.interrupted:
                 messages.clear()
                 messages.extend(messages_backup)
+                ctx["messages"] = messages
+            elif max_rounds_hit:
+                _summary = _build_rounds_summary(messages, messages_backup)
+                messages.clear()
+                messages.extend(messages_backup)
+                if _summary:
+                    messages.append({"role": "system", "content": _summary})
+                _console.print("  [dim]轮次超限，已回滚并保留执行摘要。输入 /resume 或继续对话。[/dim]")
                 ctx["messages"] = messages
             else:
                 if assistant_msg:
