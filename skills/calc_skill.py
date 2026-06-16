@@ -17,7 +17,7 @@ _SAFE_OPS = {
 }
 
 
-_MAX_EXPONENT   = 999       # 含边界：>= 1000 拒绝
+_MAX_EXPONENT   = 1000      # 含边界：>= 1000 拒绝，最大允许指数 999
 _MAX_INT_BITS   = 4096      # 结果整数位宽上限，防止巨型数占满内存
 
 def _safe_eval(node):

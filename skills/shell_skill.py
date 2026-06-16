@@ -23,8 +23,8 @@ DANGEROUS_PATTERNS = [
     r"\bshutdown\b",
     r"\breboot\b",
     r"\binit\s+0",
-    r"\bsudo\b",
-    r"\bsu\s+-\b",
+    r"\bsudo\s",             # sudo 后接空白 = 真正调用；which sudo / man sudo 不触发
+    r"\bsu\s",               # su 后接空白 = 切换用户（su -、su root 等）；submodule 不触发
     # ── 远程代码执行（管道执行） ──────────────────
     r"(curl|wget|fetch)\b.{0,80}[|]\s*(sh|bash|zsh|python\d*|ruby|node|perl)\b",
     r"\beval\s+.{0,20}(curl|wget|base64)",
