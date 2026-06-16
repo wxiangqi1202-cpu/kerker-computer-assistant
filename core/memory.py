@@ -357,11 +357,8 @@ class SemanticMemory:
 
     def add(self, content: str, source: str = "auto",
             tags=None, importance: int = 5, namespace: str = None):
-        content = content.strip()
-        try:
-            importance = max(1, min(10, int(importance)))
-        except (ValueError, TypeError):
-            importance = 5   # 非法 importance 静默降级为默认值
+        content    = content.strip()
+        importance = max(1, min(10, int(importance)))
         if namespace is None:
             namespace = config.CURRENT_NAMESPACE
         if not content:
@@ -408,10 +405,7 @@ class SemanticMemory:
         needs_evict = len(self._entries) > _MAX_MEMORIES
         self._evict_if_needed()   # 超限则全量 rebuild
         self._save()
-        # 检查新条目是否被驱逐（score 低于所有现有条目时会被淘汰）
-        if needs_evict and not any(e["id"] == entry["id"] for e in self._entries):
-            return None   # 被驱逐，不返回已失效的引用
-        if not needs_evict:
+        if not needs_evict:       # 未触发驱逐时才用增量，否则 rebuild 已包含新条目
             self._bm25.add_doc(content)
         return entry
 
@@ -442,8 +436,6 @@ class SemanticMemory:
         seen_ids: set = set()
 
         for idx, entry in enumerate(self._entries):
-            if entry.get("scope") == "session" and self._entry_score(entry) == 0:
-                continue   # 跨天失效的 session 条目不参与检索
             if category and entry.get("category") != category:
                 continue
             if entry.get("namespace", "global") not in namespaces:
@@ -463,8 +455,6 @@ class SemanticMemory:
         for entry in self._entries:
             if entry["id"] in seen_ids:
                 continue
-            if entry.get("scope") == "session" and self._entry_score(entry) == 0:
-                continue   # 同上，跳过过期 session
             if category and entry.get("category") != category:
                 continue
             if entry.get("namespace", "global") not in namespaces:
@@ -794,7 +784,7 @@ class PendingMemory:
     """
     被动提取的待确认记忆队列（当 config.MEMORY_CONFIRM=True 时启用）。
     passive → pending.json → 用户 /memory approve → semantic.json
-    超过 7 天未处理自动清除。
+    超过 7 天未处理自zai c动清除。
     """
 
     _EXPIRE_DAYS = 7
@@ -826,9 +816,8 @@ class PendingMemory:
                 ts = datetime.fromisoformat(p.get("pending_since", "")).timestamp()
                 if ts > cutoff:
                     kept.append(p)
-                # else: 超期，丢弃
             except Exception:
-                kept.append(p)  # 时间戳无效 → 保守保留，不因解析错误丢数据
+                pass
         if len(kept) != before:
             self._pending = kept
             self._save()

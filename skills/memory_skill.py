@@ -29,11 +29,11 @@ def forget(keyword):
 
 
 def recall(query):
-    """检索与当前问题相关的记忆和历史"""
+    """检索与当前问题相关的记忆和历史（只读，不修改 access_count）"""
     sem = get_semantic()
     epi = get_episodic()
 
-    sem_results = sem.search(query, limit=5)
+    sem_results = sem.search(query, limit=5, update_access=False)
     epi_results = epi.search(query, limit=3)
 
     parts = []

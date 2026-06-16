@@ -185,10 +185,14 @@ async def extract_and_save(user_message: str) -> list:
                     saved.append(entry)
                     cats_updated.add(entry.get("category", "事实"))
 
-        # 后台触发记忆合并（当某类别超过阈值时）
+        # 后台触发记忆合并（只统计非 session 条目，过期 session 不计入阈值）
         import asyncio as _aio
         for cat in cats_updated:
-            if len(sem.get_by_category(cat)) >= _CONSOLIDATE_THRESHOLD:
+            non_session = sum(
+                1 for e in sem.get_by_category(cat)
+                if e.get("scope") != "session"
+            )
+            if non_session >= _CONSOLIDATE_THRESHOLD:
                 _aio.create_task(_consolidate_background(sem, cat))
 
         return saved

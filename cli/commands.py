@@ -10,7 +10,7 @@ from rich.table import Table
 
 from core import config
 
-from core.async_client import create_client
+from core.client import create_client
 from core import history
 from core.history import clean_for_api
 import skills
@@ -557,20 +557,28 @@ def cmd_memory(args, ctx):
     # ── compress（手动触发合并）─────────────────────
     if arg.startswith("compress"):
         cat = arg[8:].strip() or None
-        import asyncio
-        async def _run():
-            from core.memory import _CONSOLIDATE_THRESHOLD
-            categories = [cat] if cat else list({e.get("category","事实") for e in sem.get_all()})
+
+        async def _do_compress():
+            categories = [cat] if cat else list({e.get("category", "事实") for e in sem.get_all()})
             total = 0
             for c in categories:
-                n = await sem.consolidate_category_async(c)
-                total += n
+                total += await sem.consolidate_category_async(c)
             return total
+
         try:
-            reduced = asyncio.get_event_loop().run_until_complete(_run())
-            _console.print(f"  [green]✓ 合并完成，减少 {reduced} 条冗余记忆[/green]")
-        except Exception as err:
-            _console.print(f"  [red]合并失败: {err}[/red]")
+            # 在已运行的事件循环内使用 create_task，避免 run_until_complete 引发 RuntimeError
+            import asyncio as _aio
+            loop = _aio.get_running_loop()
+            _console.print("  [dim]合并任务已在后台启动，稍后自动完成…[/dim]")
+            _aio.ensure_future(_do_compress())
+        except RuntimeError:
+            # 没有运行中的事件循环（测试/命令行环境），直接 run
+            import asyncio as _aio
+            try:
+                reduced = _aio.run(_do_compress())
+                _console.print(f"  [green]✓ 合并完成，减少 {reduced} 条冗余记忆[/green]")
+            except Exception as err:
+                _console.print(f"  [red]合并失败: {err}[/red]")
         return
 
     # ── stats ─────────────────────────────────────
