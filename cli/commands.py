@@ -657,6 +657,7 @@ def cmd_config(args, ctx):
         "effort": ("REASONING_EFFORT", str, "推理努力 low/medium/high"),
         "context": ("MAX_CONTEXT_MESSAGES", int, "上下文消息上限"),
         "autoroute": ("AUTO_ROUTE", bool, "自动路由（智能判断是否规划）"),
+        "shell":     ("ALLOW_SHELL", bool, "允许 LLM 执行 shell 命令"),
     }
     if args.strip():
         parts = args.strip().split(maxsplit=1)

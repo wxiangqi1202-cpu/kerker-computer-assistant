@@ -17,6 +17,9 @@ _SAFE_OPS = {
 }
 
 
+_MAX_EXPONENT   = 999       # 含边界：>= 1000 拒绝
+_MAX_INT_BITS   = 4096      # 结果整数位宽上限，防止巨型数占满内存
+
 def _safe_eval(node):
     """递归求值 AST 节点，只允许数字和基本算术运算"""
     if isinstance(node, ast.Expression):
@@ -27,11 +30,17 @@ def _safe_eval(node):
         op_func = _SAFE_OPS.get(type(node.op))
         if op_func is None:
             raise ValueError(f"不支持的运算符: {type(node.op).__name__}")
-        left = _safe_eval(node.left)
+        left  = _safe_eval(node.left)
         right = _safe_eval(node.right)
-        if isinstance(node.op, ast.Pow) and right > 1000:
-            raise ValueError("指数过大")
-        return op_func(left, right)
+        if isinstance(node.op, ast.Pow):
+            if not isinstance(right, (int, float)):
+                raise ValueError("指数必须是数字")
+            if right >= _MAX_EXPONENT:
+                raise ValueError(f"指数过大（上限 {_MAX_EXPONENT - 1}）")
+        result = op_func(left, right)
+        if isinstance(result, int) and result.bit_length() > _MAX_INT_BITS:
+            raise ValueError("计算结果整数过大（超出 4096 位）")
+        return result
     if isinstance(node, ast.UnaryOp):
         op_func = _SAFE_OPS.get(type(node.op))
         if op_func is None:

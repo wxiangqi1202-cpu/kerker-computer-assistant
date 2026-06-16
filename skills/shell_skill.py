@@ -5,6 +5,7 @@ import subprocess
 from skills import register
 
 DANGEROUS_PATTERNS = [
+    # ── 文件系统破坏 ─────────────────────────────
     r"\brm\s+(-[a-zA-Z]*\s+)*(/|~|\.\.|--no-preserve-root)",
     r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f",
     r"\brm\s+-[a-zA-Z]*f[a-zA-Z]*r",
@@ -12,13 +13,21 @@ DANGEROUS_PATTERNS = [
     r"\bdd\s+.*of\s*=\s*/dev/",
     r">\s*/dev/sd",
     r"\bformat\b.*[cC]:",
-    r":(){ :\|:& };:",
+    r"\btruncate\s+-s\s+0\b",
+    # ── Fork 炸弹 ────────────────────────────────
+    r":\(\)\s*\{",
+    # ── 权限与系统控制 ───────────────────────────
     r"\bchmod\s+(-[a-zA-Z]*\s+)*777\s+/",
     r"\bchown\s+.*\s+/",
     r"\bkill\s+-9\s+-1",
     r"\bshutdown\b",
     r"\breboot\b",
     r"\binit\s+0",
+    r"\bsudo\b",
+    r"\bsu\s+-\b",
+    # ── 远程代码执行（管道执行） ──────────────────
+    r"(curl|wget|fetch)\b.{0,80}[|]\s*(sh|bash|zsh|python\d*|ruby|node|perl)\b",
+    r"\beval\s+.{0,20}(curl|wget|base64)",
 ]
 
 _compiled = [re.compile(p) for p in DANGEROUS_PATTERNS]
@@ -38,6 +47,10 @@ def _is_interactive():
 
 
 def run_shell(command):
+    from core import config
+    if not config.ALLOW_SHELL:
+        return "Shell 执行已被禁用。如需开启，请运行 /config shell true"
+
     if _is_dangerous(command):
         if not _is_interactive():
             return f"安全限制: 检测到危险命令，非交互环境下已拒绝执行: {command}"

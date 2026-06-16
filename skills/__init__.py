@@ -258,6 +258,27 @@ def _auto_load():
         importlib.import_module(f"skills.{module_name}")
 
 
+def _check_skill_file_safe(filepath):
+    """
+    校验用户技能文件安全性（仅 Unix）：
+    - 文件必须由当前用户所有
+    - 组/其他用户不可写（防止供应链注入）
+    Windows 下跳过校验直接通过。
+    """
+    try:
+        import stat as _stat
+        st = os.stat(filepath)
+        if os.name == "nt":
+            return True, ""
+        if st.st_uid != os.getuid():
+            return False, "文件不属于当前用户"
+        if st.st_mode & (_stat.S_IWGRP | _stat.S_IWOTH):
+            return False, "组或其他用户可写（存在供应链风险）"
+        return True, ""
+    except OSError as err:
+        return False, str(err)
+
+
 def _load_user_skills():
     user_dir = config.USER_SKILLS_DIR
     if not os.path.isdir(user_dir):
@@ -266,6 +287,10 @@ def _load_user_skills():
         if not filename.endswith(".py") or filename.startswith("_"):
             continue
         filepath = os.path.join(user_dir, filename)
+        safe, reason = _check_skill_file_safe(filepath)
+        if not safe:
+            print(f"⚠ 跳过用户技能 {filename}: {reason}")
+            continue
         module_name = f"user_skill_{filename[:-3]}"
         try:
             spec = importlib.util.spec_from_file_location(module_name, filepath)

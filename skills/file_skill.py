@@ -7,12 +7,26 @@ _SENSITIVE_PATHS = [
     os.path.expanduser("~/.ssh"),
     os.path.expanduser("~/.gnupg"),
     os.path.expanduser("~/.aws"),
+    os.path.expanduser("~/.config/gh"),         # GitHub CLI token
+    os.path.expanduser("~/.docker/config.json"), # Docker registry token
+    os.path.expanduser("~/.netrc"),              # FTP/HTTP credentials
+    os.path.expanduser("~/.npmrc"),              # NPM token
+    os.path.expanduser("~/.pypirc"),             # PyPI token
     os.path.expanduser("~/.kerker/credentials"),
     "/etc/shadow",
     "/etc/passwd",
+    "/etc/sudoers",
+    "/private/etc/shadow",
+    "/private/etc/passwd",
 ]
 
-_SENSITIVE_NAMES = {".zshrc", ".bashrc", ".bash_profile", ".profile", ".zprofile", ".env"}
+_SENSITIVE_NAMES = {
+    ".zshrc", ".bashrc", ".bash_profile", ".profile",
+    ".zprofile", ".env", ".envrc",
+    "id_rsa", "id_ed25519", "id_ecdsa",    # 私钥文件名
+}
+
+_MAX_WRITE_BYTES = 5 * 1024 * 1024  # 5 MB 写入上限
 
 
 def _is_sensitive(path):
@@ -45,6 +59,9 @@ def write_file(path, content):
     path = os.path.expanduser(path)
     if _is_sensitive(path):
         return f"安全限制: 不允许写入敏感路径 {path}"
+    size = len(content.encode("utf-8"))
+    if size > _MAX_WRITE_BYTES:
+        return f"写入拒绝: 内容超出 5MB 限制（当前 {size // 1024} KB）"
     try:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
