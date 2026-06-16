@@ -141,6 +141,7 @@ class SemanticMemory:
     def __init__(self):
         self._entries = []
         self._tfidf = _TFIDFIndex()
+        self._access_dirty = False
         self._load()
 
     def _load(self):
@@ -161,6 +162,7 @@ class SemanticMemory:
         _ensure_dir()
         with open(SEMANTIC_FILE, "w", encoding="utf-8") as f:
             json.dump(self._entries, f, ensure_ascii=False, indent=2)
+        self._access_dirty = False
 
     def add(self, content, source="auto", tags=None, importance=5):
         """添加一条语义记忆，自动检测冲突"""
@@ -216,6 +218,8 @@ class SemanticMemory:
         """
         TF-IDF 语义搜索，按相关度+重要性+访问频率综合排序。
         比纯关键词匹配能更好地处理同义词和模糊查询。
+        access_count 累加后标记为 dirty，延迟到下次写盘操作时一并持久化，
+        避免每次搜索都触发同步 I/O。
         """
         if not self._entries:
             return []
@@ -253,7 +257,7 @@ class SemanticMemory:
             results.append(entry)
 
         if results:
-            self._save()
+            self._access_dirty = True
         return results
 
     def get_all(self):
@@ -270,6 +274,7 @@ class SemanticMemory:
 
     def clear_all(self):
         self._entries = []
+        self._access_dirty = False
         self._save()
         self._rebuild_index()
 
@@ -301,13 +306,15 @@ class SemanticMemory:
         return False
 
     def format_for_prompt(self, limit=8):
-        """格式化为 system prompt 注入文本"""
+        """格式化为 system prompt 注入文本，并顺带持久化累计的 access_count 变更"""
         top = self.get_top(limit)
         if not top:
             return ""
         lines = ["[用户记忆]"]
         for e in top:
             lines.append(f"- {e['content']}")
+        if self._access_dirty:
+            self._save()
         return "\n".join(lines)
 
 

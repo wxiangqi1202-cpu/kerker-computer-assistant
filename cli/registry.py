@@ -14,7 +14,10 @@ def command(name, description=""):
 
 
 def dispatch(text, ctx):
-    """根据输入分发命令，返回 True 表示已处理"""
+    """根据输入分发命令，返回 True 表示已处理。
+    精确匹配优先；无精确匹配时，仅在唯一前缀的情况下触发补全，
+    避免多候选时调用了非预期命令。
+    """
     parts = text.split(maxsplit=1)
     cmd_name = parts[0].lower()
     args = parts[1] if len(parts) > 1 else ""
@@ -23,12 +26,12 @@ def dispatch(text, ctx):
         _registry[cmd_name]["func"](args, ctx)
         return True
 
-    for registered in _registry:
-        if cmd_name.startswith(registered) and registered != cmd_name:
-            suffix = cmd_name[len(registered):]
-            combined_args = (suffix + " " + args).strip()
-            _registry[registered]["func"](combined_args, ctx)
-            return True
+    matches = [r for r in _registry if cmd_name.startswith(r) and r != cmd_name]
+    if len(matches) == 1:
+        suffix = cmd_name[len(matches[0]):]
+        combined_args = (suffix + " " + args).strip()
+        _registry[matches[0]]["func"](combined_args, ctx)
+        return True
 
     return False
 

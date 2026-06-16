@@ -186,8 +186,12 @@ def _load_user_overrides():
         chosen = data.get("theme", "minimal")
         if chosen in BUILTIN_THEMES and _current_theme.get("name") != chosen:
             _current_theme = dict(BUILTIN_THEMES[chosen])
-    except Exception:
-        pass
+    except json.JSONDecodeError as err:
+        import sys
+        print(f"[kerker] 主题配置损坏，已使用默认主题: {err}", file=sys.stderr)
+    except Exception as err:
+        import sys
+        print(f"[kerker] 加载主题出错，已使用默认主题: {err}", file=sys.stderr)
 
 
 def _save_theme_choice(name):

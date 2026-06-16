@@ -4,13 +4,19 @@
   web_summary    — 获取指定 URL 的文本内容
 """
 
-import subprocess
 import ipaddress
 from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 from skills import register
 
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    )
+}
 
 _BLOCKED_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "[::1]", "metadata.google.internal"}
 
@@ -38,17 +44,15 @@ def _is_safe_url(url):
 
 
 def _bing_search(query, max_results=6):
-    """Bing 搜索"""
+    """Bing 搜索（使用 requests，跨平台兼容）"""
     url = f"https://www.bing.com/search?q={requests.utils.quote(query)}&setlang=zh-Hans"
-    result = subprocess.run(
-        ["curl", "-s", "-L", "--max-time", "8", "-H",
-         "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36", url],
-        capture_output=True, text=True, timeout=10,
-    )
-    if result.returncode != 0:
+    try:
+        resp = requests.get(url, headers=_HEADERS, timeout=8, allow_redirects=True)
+        resp.raise_for_status()
+    except Exception:
         return None
 
-    soup = BeautifulSoup(result.stdout, "html.parser")
+    soup = BeautifulSoup(resp.text, "html.parser")
     results = []
     seen_domains = set()
 
@@ -75,18 +79,12 @@ def _bing_search(query, max_results=6):
 
 
 def _sogou_search(query, max_results=6):
-    """搜狗搜索（Bing 失败时的 fallback）"""
+    """搜狗搜索（Bing 失败时的 fallback，使用 requests）"""
     url = f"https://www.sogou.com/web?query={requests.utils.quote(query)}"
     try:
-        result = subprocess.run(
-            ["curl", "-s", "-L", "--max-time", "8", "-H",
-             "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", url],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode != 0:
-            return None
-
-        soup = BeautifulSoup(result.stdout, "html.parser")
+        resp = requests.get(url, headers=_HEADERS, timeout=8, allow_redirects=True)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
         results = []
         for item in soup.select(".vrwrap, .rb"):
             title_el = item.select_one("h3 a, .vr_title a")
@@ -116,8 +114,6 @@ def web_search(query):
         for r in results:
             lines.append(f"- {r['title']}\n  {r['snippet']}\n  {r['url']}")
         return "\n\n".join(lines)
-    except subprocess.TimeoutExpired:
-        return "搜索超时"
     except Exception as e:
         return f"搜索出错: {e}"
 
@@ -127,8 +123,7 @@ def web_summary(url):
     if not _is_safe_url(url):
         return f"安全限制: 不允许访问该 URL（内网/受限地址）: {url}"
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
-        resp = requests.get(url, headers=headers, timeout=8)
+        resp = requests.get(url, headers=_HEADERS, timeout=8)
         resp.raise_for_status()
         resp.encoding = resp.apparent_encoding
         soup = BeautifulSoup(resp.text, "html.parser")

@@ -15,31 +15,44 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 class TestRouter(unittest.TestCase):
     def setUp(self):
-        from agents.router import route, RouteDecision, _calc_complexity
+        from agents.router import route, RouteDecision
         self.route = route
         self.RouteDecision = RouteDecision
-        self._calc_complexity = _calc_complexity
 
     def test_simple_greetings_are_direct(self):
         d = self.route("你好")
         self.assertEqual(d.action, self.RouteDecision.DIRECT)
 
-    def test_complex_task_triggers_plan(self):
-        d = self.route("首先搜索最新的AI论文，然后分析其中的关键技术，最后写一份总结报告")
-        self.assertEqual(d.action, self.RouteDecision.PLAN)
-
-    def test_inquiry_reduces_score(self):
-        score = self._calc_complexity("什么是机器学习")
-        self.assertLess(score, 2)
-
-    def test_single_agent_keyword_match(self):
-        d = self.route("帮我审查一下这段代码", available_agents={"code_reviewer"})
-        self.assertEqual(d.action, self.RouteDecision.SINGLE_AGENT)
-        self.assertEqual(d.agent_name, "code_reviewer")
-
     def test_short_input_is_direct(self):
         d = self.route("hi")
         self.assertEqual(d.action, self.RouteDecision.DIRECT)
+
+    def test_ok_response_is_direct(self):
+        d = self.route("ok")
+        self.assertEqual(d.action, self.RouteDecision.DIRECT)
+
+    def test_ascend_task_triggers_plan(self):
+        d = self.route("帮我写一个 AscendC 算子实现 ReLU")
+        self.assertEqual(d.action, self.RouteDecision.PLAN)
+
+    def test_ascend_debug_triggers_plan(self):
+        d = self.route("算子调试，编译报错了")
+        self.assertEqual(d.action, self.RouteDecision.PLAN)
+
+    def test_general_task_is_pass_through(self):
+        d = self.route("帮我审查一下这段代码")
+        self.assertEqual(d.action, self.RouteDecision.PASS_THROUGH)
+
+    def test_continue_without_plan_is_direct(self):
+        d = self.route("继续")
+        self.assertEqual(d.action, self.RouteDecision.DIRECT)
+
+    def test_clear_plan_set_on_new_topic_with_active_plan(self):
+        class FakePlan:
+            has_plan = True
+            plan_steps = []
+        d = self.route("你好", context=FakePlan())
+        self.assertTrue(d.clear_plan)
 
 
 class TestExtractFirstJson(unittest.TestCase):

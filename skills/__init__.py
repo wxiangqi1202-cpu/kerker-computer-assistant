@@ -137,15 +137,14 @@ _TOOL_CATEGORIES = {
 }
 
 _ROLE_TOOL_PROFILES = {
-    "默认": ["core", "agent", "memory", "location", "math"],
-    "代码助手": ["core", "agent", "math"],
-    "翻译官": ["core"],
-    "写作助理": ["core"],
-    "算子开发": ["core", "agent", "ascend"],
+    "默认":   ["core", "agent", "memory", "location", "math", "role"],
+    "代码助手": ["core", "agent", "math", "role"],
+    "翻译官":  ["core", "role"],
+    "写作助理": ["core", "role"],
+    "算子开发": ["core", "agent", "ascend", "role"],
 }
 
 _CONTEXT_TOOL_TRIGGERS = {
-    "role": [r"角色|人设|切换|role|persona"],
     "ascend": [r"算子|npu|ascend|tiling|昇腾"],
     "location": [r"天气|位置|weather|location"],
     "memory": [r"记住|忘记|回忆|remember|forget|recall"],

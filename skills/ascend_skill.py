@@ -4,6 +4,24 @@ import subprocess
 import os
 from skills import register
 
+_toolkit_path_cache = None
+
+
+def _get_toolkit_path():
+    """查找 Ascend CANN toolkit 路径，结果缓存在进程内。"""
+    global _toolkit_path_cache
+    if _toolkit_path_cache is not None:
+        return _toolkit_path_cache
+    try:
+        result = subprocess.run(
+            "dirname $(find /usr/local/Ascend -name 'ccec' -type f 2>/dev/null | head -1) | xargs dirname",
+            shell=True, capture_output=True, text=True, timeout=10,
+        )
+        _toolkit_path_cache = result.stdout.strip() or ""
+    except Exception:
+        _toolkit_path_cache = ""
+    return _toolkit_path_cache
+
 
 def npu_info():
     """查询昇腾 NPU 设备信息"""
@@ -29,16 +47,7 @@ def ascend_build(project_dir, soc_version="ascend910b2"):
     if not os.path.isdir(project_dir):
         return f"目录不存在: {project_dir}"
 
-    toolkit = ""
-    try:
-        result = subprocess.run(
-            "dirname $(find /usr/local/Ascend -name 'ccec' -type f 2>/dev/null | head -1) | xargs dirname",
-            shell=True, capture_output=True, text=True, timeout=10
-        )
-        toolkit = result.stdout.strip()
-    except Exception:
-        pass
-
+    toolkit = _get_toolkit_path()
     if not toolkit:
         return "未找到 Ascend toolkit，请检查 CANN 安装"
 
@@ -78,16 +87,9 @@ def ascend_run(executable, args=""):
         return f"可执行文件不存在: {executable}"
 
     env_setup = ""
-    try:
-        result = subprocess.run(
-            "dirname $(find /usr/local/Ascend -name 'ccec' -type f 2>/dev/null | head -1) | xargs dirname",
-            shell=True, capture_output=True, text=True, timeout=10
-        )
-        toolkit = result.stdout.strip()
-        if toolkit:
-            env_setup = f"source {toolkit}/bin/setenv.bash 2>/dev/null; "
-    except Exception:
-        pass
+    toolkit = _get_toolkit_path()
+    if toolkit:
+        env_setup = f"source {toolkit}/bin/setenv.bash 2>/dev/null; "
 
     cmd = f"{env_setup}{executable} {args}".strip()
 

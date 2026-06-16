@@ -3,6 +3,7 @@
 """
 
 import os
+import sys
 import json
 
 
@@ -67,7 +68,8 @@ class Config:
 
     _BUILTIN_ROLES = None
     _PERSIST_KEYS = ("MODEL", "CURRENT_ROLE", "STREAM", "REASONING_EFFORT",
-                     "ENABLE_THINKING", "MAX_CONTEXT_MESSAGES", "AUTO_ROUTE")
+                     "ENABLE_THINKING", "MAX_CONTEXT_MESSAGES", "AUTO_ROUTE",
+                     "STATUSBAR_STYLE")
 
     def __init__(self):
         self.MODEL = "deepseek-v4-flash"
@@ -78,6 +80,7 @@ class Config:
         self.MAX_TOKENS = None
         self.MAX_CONTEXT_MESSAGES = 40
         self.AUTO_ROUTE = True
+        self.STATUSBAR_STYLE = "a"
         self.CURRENT_ROLE = "默认"
         self.ROLES = self._build_default_roles()
         self.SYSTEM_PROMPTS = self.ROLES[self.CURRENT_ROLE]
@@ -88,7 +91,7 @@ class Config:
             "默认": [
                 "请简洁回答，控制在3-5句话以内，除非用户要求详细展开。",
                 "请谨记：你是由王祥祺制作出来的面向计算加速的Agent框架，名字叫做KerKer。回答时不要对名字加粗或添加任何格式修饰。",
-                "跟随用户的输入语言回答，简洁且有条理。。",
+                "跟随用户的输入语言回答，简洁且有条理。",
                 "要更具备幽默感，但要注意场合，不要过于随意。",
                 self.TOOL_DIRECTIVE,
                 self.EXPLORE_DIRECTIVE,
@@ -170,15 +173,25 @@ class Config:
                 self.MAX_CONTEXT_MESSAGES = int(data["MAX_CONTEXT_MESSAGES"])
             if "AUTO_ROUTE" in data:
                 self.AUTO_ROUTE = bool(data["AUTO_ROUTE"])
+            if data.get("STATUSBAR_STYLE") in ("a", "b", "c", "d", "e", "f", "g", "h"):
+                self.STATUSBAR_STYLE = data["STATUSBAR_STYLE"]
             user_roles = data.get("USER_ROLES", {})
-            for name, prompts in user_roles.items():
-                if name not in self.ROLES:
-                    self.ROLES[name] = prompts
+            if isinstance(user_roles, dict):
+                for name, prompts in user_roles.items():
+                    if (
+                        name not in self.ROLES
+                        and isinstance(prompts, list)
+                        and prompts
+                        and all(isinstance(p, str) for p in prompts)
+                    ):
+                        self.ROLES[name] = prompts
             if data.get("CURRENT_ROLE") in self.ROLES:
                 self.CURRENT_ROLE = data["CURRENT_ROLE"]
                 self.SYSTEM_PROMPTS = self.ROLES[self.CURRENT_ROLE]
-        except Exception:
-            pass
+        except json.JSONDecodeError as err:
+            print(f"[kerker] 配置文件损坏，已使用默认配置: {err}", file=sys.stderr)
+        except Exception as err:
+            print(f"[kerker] 加载配置出错，已使用默认配置: {err}", file=sys.stderr)
 
     def save_user_config(self):
         os.makedirs(self.KERKER_HOME, exist_ok=True)

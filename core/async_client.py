@@ -313,7 +313,6 @@ async def send(client, messages):
     _max_rounds = 40
     _round = 0
     _first_token_recorded = False
-    _kwargs_cache = None
     while True:
         _round += 1
         if _round > _max_rounds:

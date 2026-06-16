@@ -72,10 +72,14 @@ def show_welcome(style=None):
         "version": "0.2.0",
     }
     try:
-        import importlib.metadata
-        ctx["version"] = importlib.metadata.version("kerker")
+        from cli.loop import VERSION
+        ctx["version"] = VERSION
     except Exception:
-        pass
+        try:
+            import importlib.metadata
+            ctx["version"] = importlib.metadata.version("kerker")
+        except Exception:
+            pass
 
     renderer = {
         "cyber": _welcome_cyber,

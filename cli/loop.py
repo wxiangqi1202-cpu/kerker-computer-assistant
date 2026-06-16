@@ -11,6 +11,7 @@ from core import config
 from core.async_client import create_client, send
 from core.history import ensure_dirs
 from core import history
+from core.tokens import count_tokens, count_message_tokens
 from display import Spinner, TaskBoard, render
 from display.spinner import CONNECTING_TIPS
 from cli.completer import create_session
@@ -31,15 +32,17 @@ except Exception:
     pass
 
 
-def _print_status_bar():
-    """输入前打印一行淡色状态分隔线：模型 · 角色 · 工具数"""
+def _print_status_bar(messages=None):
+    """输入前打印一行淡色状态分隔线，样式由 config.STATUSBAR_STYLE 决定。"""
     import skills
-    model = config.MODEL
-    role = config.CURRENT_ROLE
-    tool_count = len(skills.get_skill_names())
-    bar = f"  \033[90m─── {model} · {role} · {tool_count} tools ───\033[0m"
-    sys.stdout.write(f"{bar}\n")
-    sys.stdout.flush()
+    from display.statusbar import render_statusbar
+    render_statusbar(
+        config.STATUSBAR_STYLE,
+        config.MODEL,
+        config.CURRENT_ROLE,
+        len(skills.get_skill_names()),
+        messages,
+    )
 
 
 def _build_rounds_summary(messages_full, messages_backup):
@@ -119,9 +122,6 @@ async def _read_multiline(session):
     return "\n".join(lines)
 
 
-from core.tokens import count_tokens, count_message_tokens, get_max_context_tokens
-
-
 def _estimate_tokens(text):
     """Token 计数（优先 tiktoken 精确计算，fallback 启发式）"""
     return count_tokens(text)
@@ -138,6 +138,7 @@ def _trim_context(messages):
     超出部分压缩为摘要。保留 system 消息，确保 tool 链完整。
     """
     from core.history import clean_for_api
+    from core.tokens import get_max_context_tokens
     system_msgs = [m for m in messages if m["role"] == "system"]
     non_system = [m for m in messages if m["role"] != "system"]
 
@@ -252,7 +253,7 @@ async def _async_main():
     while True:
         try:
             if not _first_prompt:
-                _print_status_bar()
+                _print_status_bar(messages)
             _first_prompt = False
             from prompt_toolkit.formatted_text import HTML
             short = _model_short_name(config.MODEL)

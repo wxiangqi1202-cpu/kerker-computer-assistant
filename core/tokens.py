@@ -11,11 +11,13 @@ import functools
 
 _encoding = None
 _tiktoken_available = False
+_tiktoken_init_attempted = False
 
 
 def _init_tiktoken():
-    """延迟初始化 tiktoken（仅在首次调用时加载）"""
-    global _encoding, _tiktoken_available
+    """延迟初始化 tiktoken（仅在首次调用时加载，失败后不再重试）"""
+    global _encoding, _tiktoken_available, _tiktoken_init_attempted
+    _tiktoken_init_attempted = True
     try:
         import tiktoken
         _encoding = tiktoken.get_encoding("cl100k_base")
@@ -32,8 +34,8 @@ def count_tokens(text: str) -> int:
     if not text:
         return 0
 
-    global _encoding, _tiktoken_available
-    if _encoding is None and not _tiktoken_available:
+    global _tiktoken_init_attempted
+    if not _tiktoken_init_attempted:
         _init_tiktoken()
 
     if _tiktoken_available and _encoding:
@@ -116,7 +118,7 @@ def get_max_context_tokens(model: str = None) -> int:
 
 def is_tiktoken_available() -> bool:
     """检查 tiktoken 是否可用（供诊断/日志）"""
-    global _tiktoken_available, _encoding
-    if _encoding is None:
+    global _tiktoken_init_attempted
+    if not _tiktoken_init_attempted:
         _init_tiktoken()
     return _tiktoken_available

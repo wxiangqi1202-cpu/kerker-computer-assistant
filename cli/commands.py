@@ -492,7 +492,7 @@ def _do_export(ctx):
     lines = []
     for msg in ctx["messages"]:
         role = msg["role"]
-        content = msg.get("content", "")
+        content = msg.get("content", "") or ""
         if role == "system":
             continue
         elif role == "user":
@@ -570,6 +570,46 @@ def cmd_welcome(args, ctx):
         show_welcome(chosen)
 
 
+@command("/statusbar", "切换状态栏 token 用量样式")
+def cmd_statusbar(args, ctx):
+    from display.statusbar import STYLES, render_statusbar
+
+    if args.strip():
+        chosen = args.strip().lower()
+        if chosen in STYLES:
+            config.STATUSBAR_STYLE = chosen
+            config.save_user_config()
+            name, desc = STYLES[chosen]
+            _console.print(f"  [green]✓ 状态栏样式: {chosen.upper()} — {name}[/green]")
+            _console.print(f"  [dim]{desc}[/dim]")
+        else:
+            valid = ", ".join(STYLES.keys())
+            _console.print(f"  [red]未知样式: {chosen}  可选: {valid}[/red]")
+        return
+
+    current = config.STATUSBAR_STYLE
+    items = [
+        {"label": f"{k.upper()}  {name}", "hint": f"{'✓ 当前  ' if k == current else ''}{desc}"}
+        for k, (name, desc) in STYLES.items()
+    ]
+    current_idx = list(STYLES.keys()).index(current) if current in STYLES else 0
+    idx = pick(items, title="↑↓ 选择状态栏样式, Enter 确认, ESC 取消", current_idx=current_idx)
+    if idx is None:
+        return
+
+    chosen = list(STYLES.keys())[idx]
+    config.STATUSBAR_STYLE = chosen
+    config.save_user_config()
+    name, desc = STYLES[chosen]
+    _console.print(f"  [green]✓ 状态栏样式: {chosen.upper()} — {name}[/green]")
+
+    _console.print()
+    _console.print("  [dim]预览（当前对话 token 统计）:[/dim]")
+    render_statusbar(chosen, config.MODEL, config.CURRENT_ROLE,
+                     len(__import__("skills").get_skill_names()), ctx.get("messages"))
+    _console.print()
+
+
 @command("/theme", "切换渲染主题")
 def cmd_theme(args, ctx):
     from display.theme import get_theme, set_theme, get_theme_names
@@ -616,6 +656,7 @@ def cmd_config(args, ctx):
         "thinking": ("ENABLE_THINKING", bool, "深度思考"),
         "effort": ("REASONING_EFFORT", str, "推理努力 low/medium/high"),
         "context": ("MAX_CONTEXT_MESSAGES", int, "上下文消息上限"),
+        "autoroute": ("AUTO_ROUTE", bool, "自动路由（智能判断是否规划）"),
     }
     if args.strip():
         parts = args.strip().split(maxsplit=1)
