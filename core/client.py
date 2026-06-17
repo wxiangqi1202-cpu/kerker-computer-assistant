@@ -14,7 +14,6 @@ import asyncio
 from openai import AsyncOpenAI, APIStatusError, APIConnectionError, APITimeoutError
 from core import config
 from core.credentials import load_api_key
-import skills
 
 _API_MAX_RETRIES = 3
 _API_RETRY_BASE_DELAY = 1.0
@@ -65,7 +64,7 @@ async def api_call_with_retry(client, kwargs):
     raise last_error
 
 
-def build_kwargs(messages, user_input=None):
+def build_kwargs(messages, tool_specs=None):
     """构建 API 请求参数"""
     extra_body = {}
     if config.ENABLE_THINKING:
@@ -84,10 +83,6 @@ def build_kwargs(messages, user_input=None):
     if config.STREAM:
         kwargs["stream_options"] = {"include_usage": True}
 
-    tool_specs = skills.get_filtered_tool_specs(
-        role_name=config.CURRENT_ROLE,
-        user_input=user_input,
-    )
     if tool_specs:
         kwargs["tools"] = tool_specs
 

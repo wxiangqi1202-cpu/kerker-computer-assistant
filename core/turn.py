@@ -260,8 +260,11 @@ async def send(client, messages):
             if user_msgs:
                 _last_user_input = user_msgs[-1].get("content", "")
 
-        kwargs = build_kwargs(working,
-                              user_input=_last_user_input)
+        tool_specs = skills.get_filtered_tool_specs(
+            role_name=config.CURRENT_ROLE,
+            user_input=_last_user_input,
+        )
+        kwargs = build_kwargs(working, tool_specs=tool_specs)
         response = await api_call_with_retry(client, kwargs)
 
         handler = handle_stream(response) if config.STREAM else handle_sync(response)
