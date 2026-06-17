@@ -14,6 +14,7 @@
 """
 
 import asyncio
+import json
 from core import config
 from core.client import api_call_with_retry, build_kwargs, handle_stream, handle_sync
 from core.prompt import sync_system_messages, clean_route_messages, PREFIX_AUTO_ROUTE, PREFIX_EXEC_HINT, PREFIX_EXEC_FEEDBACK
@@ -26,6 +27,19 @@ from core import tool_registry
 from core.tool_registry import is_tool_error
 
 _MAX_ROUNDS = 40
+
+
+def _can_dispatch_directly(tracker):
+    """检查是否可以跳过主 LLM 逐步调度，由框架直接分发。
+    条件：处于 PLAN_MODE 且所有 pending 步骤都有 agent 绑定。
+    """
+    if not tracker.has_plan:
+        return False
+    steps = tracker.plan_steps
+    for s in steps:
+        if s.status.value == "pending" and not s.agent:
+            return False
+    return True
 
 
 def _try_auto_route(messages):
@@ -165,6 +179,81 @@ async def _dispatch_tool_calls(other_calls, messages, tracker, metrics):
         tracker.complete_unbound_step()
 
     return results
+
+
+async def _dispatch_plan_steps(tracker, metrics, event_callback):
+    """框架层直接分发 plan 步骤（拓扑序分层并行）。
+    跳过主 LLM 的逐步调度，直接按 planner 的依赖图执行。
+
+    返回 [{step_name, agent, result}, ...] 全部步骤结果。
+    event_callback: async callable，用于 yield 事件给调用方。
+    """
+    import time as _time
+    import json as _json
+
+    steps = tracker.plan_steps
+    if not steps:
+        return []
+
+    step_count = len(steps)
+    results = [None] * step_count
+    done_set = set()
+
+    while len(done_set) < step_count:
+        ready = []
+        for idx, step in enumerate(steps):
+            if idx in done_set:
+                continue
+            if step.status.value != "pending":
+                if step.status.value in ("done", "error"):
+                    done_set.add(idx)
+                continue
+            if all(d in done_set for d in step.deps):
+                ready.append((idx, step))
+
+        if not ready:
+            break
+
+        for idx, step in ready:
+            tracker.agent_start(step.agent)
+            await event_callback({"type": "tool_exec", "name": f"agent_{step.agent}", "args": ""})
+
+        async def _run_step(idx, step):
+            task_arg = _json.dumps({"task": step.name}, ensure_ascii=False)
+            _start = _time.time()
+            raw = await tool_registry.async_call(f"agent_{step.agent}", task_arg)
+            _dur = (_time.time() - _start) * 1000
+            result_text = trim_tool_result(raw, max_chars=_AGENT_RESULT_MAX_CHARS)
+            if is_tool_error(result_text):
+                tracker.agent_error(step.agent, error=result_text[:100])
+                metrics.record_agent_call(f"agent_{step.agent}", _dur, success=False)
+            else:
+                tracker.agent_done(step.agent, summary=result_text[:100] if result_text else "")
+                metrics.record_agent_call(f"agent_{step.agent}", _dur, success=True)
+            return idx, step, result_text
+
+        if len(ready) > 1:
+            batch_results = await asyncio.gather(
+                *[_run_step(idx, step) for idx, step in ready],
+                return_exceptions=True,
+            )
+            for br in batch_results:
+                if isinstance(br, Exception):
+                    continue
+                idx, step, result_text = br
+                results[idx] = {"step_name": step.name, "agent": step.agent, "result": result_text}
+                done_set.add(idx)
+                await event_callback({"type": "tool_result", "name": f"agent_{step.agent}", "result": result_text})
+        else:
+            idx, step = ready[0]
+            _, _, result_text = await _run_step(idx, step)
+            results[idx] = {"step_name": step.name, "agent": step.agent, "result": result_text}
+            done_set.add(idx)
+            await event_callback({"type": "tool_result", "name": f"agent_{step.agent}", "result": result_text})
+
+        metrics.record_round()
+
+    return [r for r in results if r is not None]
 
 
 def _post_round_inject(messages, tracker, agent_calls, other_calls):
@@ -307,6 +396,41 @@ async def send(client, messages):
         agent_results = await _dispatch_agent_calls(agent_calls, working, tracker, metrics)
         for tc, tool_result in agent_results:
             yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
+
+        if agent_calls and _can_dispatch_directly(tracker):
+            _events_to_yield = []
+
+            async def _yield_event(ev):
+                _events_to_yield.append(ev)
+
+            plan_results = await _dispatch_plan_steps(tracker, metrics, _yield_event)
+            for ev in _events_to_yield:
+                yield ev
+
+            if plan_results:
+                for pr in plan_results:
+                    working.append({
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{
+                            "id": f"direct_{pr['agent']}",
+                            "type": "function",
+                            "function": {
+                                "name": f"agent_{pr['agent']}",
+                                "arguments": json.dumps({"task": pr["step_name"]}, ensure_ascii=False),
+                            },
+                        }],
+                    })
+                    working.append({
+                        "role": "tool",
+                        "tool_call_id": f"direct_{pr['agent']}",
+                        "content": pr["result"] or "",
+                    })
+
+                count = tracker.total_steps
+                tracker.set_footer(f"整合 {count} 个子任务结果，等待模型响应...")
+                yield {"type": "summarizing", "task_count": count}
+                continue
 
         for tc in other_calls:
             yield {"type": "tool_exec", "name": tc["name"], "args": tc["args"]}
