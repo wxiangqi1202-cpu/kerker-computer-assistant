@@ -316,5 +316,6 @@ async def send(client, messages):
         _post_round_inject(working, tracker, agent_calls, other_calls)
 
         if tracker.has_plan and tracker.done_count >= tracker.total_steps:
-            tracker.set_footer("等待模型生成最终回复...")
-            yield {"type": "summarizing"}
+            count = tracker.total_steps
+            tracker.set_footer(f"整合 {count} 个子任务结果，等待模型响应...")
+            yield {"type": "summarizing", "task_count": count}

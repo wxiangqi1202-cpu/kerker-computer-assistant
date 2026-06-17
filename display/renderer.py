@@ -62,11 +62,14 @@ async def render(event_stream, spinner=None, taskboard=None):
     receiving_text = False
     max_rounds_hit = False
     route_decision = None
+    _summarizing = False
+    _text_chars = 0
 
     cancel_task = None
 
     async def _consume_stream():
         nonlocal reply, assistant_msg, new_messages, receiving_text, route_decision
+        nonlocal _summarizing, _text_chars
         async for event in event_stream:
             if spinner.interrupted.is_set():
                 break
@@ -98,17 +101,23 @@ async def render(event_stream, spinner=None, taskboard=None):
                 pass
 
             elif etype == "summarizing":
-                spinner.update(tips=["等待模型生成最终回复..."])
+                _summarizing = True
+                count = event.get("task_count", 0)
+                if count:
+                    spinner.update(tips=[f"整合 {count} 个子任务结果，等待模型响应..."])
+                else:
+                    spinner.update(tips=["等待模型生成最终回复..."])
 
             elif etype == "text":
+                chunk = event.get("content", "")
                 if not receiving_text:
                     receiving_text = True
                     spinner.update(tips=GENERATING_TIPS)
+                if _summarizing:
+                    _text_chars += len(chunk)
                     from core.progress import get_tracker as _gt
-                    _trk = _gt()
-                    if _trk.has_plan and _trk.total_steps > 0 and _trk.done_count >= _trk.total_steps:
-                        _trk.set_footer("正在输出最终回复...")
-                recovery.accumulate_text(event.get("content", ""))
+                    _gt().set_footer(f"模型输出中: 已生成 {_text_chars} 字...")
+                recovery.accumulate_text(chunk)
 
             elif etype == "done":
                 timer.stop()
