@@ -776,6 +776,7 @@ def cmd_config(args, ctx):
         "passive":        ("PASSIVE_MEMORY", bool, "被动记忆（无感知提取用户习惯/偏好）"),
         "memory_confirm": ("MEMORY_CONFIRM",  bool, "记忆确认模式（被动提取先进待确认队列）"),
         "shell":          ("ALLOW_SHELL",     bool, "允许 LLM 执行 shell 命令"),
+        "animation":      ("ANIMATION_SPEED", str, "完成动画 fast/normal/off"),
     }
     if args.strip():
         parts = args.strip().split(maxsplit=1)

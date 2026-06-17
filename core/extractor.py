@@ -130,7 +130,7 @@ async def extract_and_save(user_message: str, context_messages: list = None) -> 
     try:
         from openai import AsyncOpenAI
         from core.credentials import load_api_key
-        from core.memory import get_semantic
+        from core.memory import get_semantic, _write_lock
 
         api_key = load_api_key()
         if not api_key:
@@ -174,8 +174,6 @@ async def extract_and_save(user_message: str, context_messages: list = None) -> 
         items = json.loads(json_str)
         if not isinstance(items, list):
             return []
-
-        from core.memory import get_semantic, _write_lock
 
         sem   = get_semantic()
         pend  = None

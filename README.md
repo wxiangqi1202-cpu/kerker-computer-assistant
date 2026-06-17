@@ -26,7 +26,7 @@ KerKer 是一个运行在终端里的 AI 编程助手与多智能体协作框架
 |---|---|
 | 🤖 **多智能体协作** | Planner 自动拆解任务，Research / CodeReview / AscendDev 并行或串行执行 |
 | 🎭 **角色蒸馏** | 说出人名，AI 自动搜索多源资料并提炼 7 维度人格 Prompt，一键变身任意角色 |
-| 🧠 **持久化记忆** | TF-IDF 语义记忆 + 情景记忆，跨会话记住你的偏好和项目背景 |
+| 🧠 **持久化记忆** | BM25 语义记忆 + 时间衰减 + 情景记忆，跨会话记住你的偏好和项目背景 |
 | 🖥️ **沉浸式终端 UI** | 流畅 Markdown 渲染、代码高亮、任务进度面板、可视化 token 用量状态栏 |
 | ⚡ **昇腾专项支持** | 内置 AscendC 算子开发 / 调试 Agent，覆盖编译、运行、精度诊断全流程 |
 | 🔌 **技能可扩展** | 在 `~/.kerker/skills/` 放一个 `.py` 文件即可注册新工具，无需改动框架代码 |
@@ -83,6 +83,7 @@ kerker
 /deep          切换深度模式（pro + 开思考）
 /model         交互式切换模型
 /role          切换 / 新建角色
+/project       切换 / 查看项目命名空间（隔离记忆）
 /statusbar     切换状态栏 token 用量样式（8 种）
 /theme         切换 Markdown 渲染主题
 /welcome       切换启动页风格
@@ -98,7 +99,7 @@ kerker
 
 **多行输入**：以 `"""` 开头，再次输入 `"""` 结束，适合粘贴大段代码或文本。
 
-**中断**：任意时刻按 `ESC` 停止响应，输入 `/resume` 可从断点续接。
+**中断**：任意时刻按 `ESC` 停止响应，输入 `/resume` 可自动续接（无需额外输入，直接发送断点恢复指令）。
 
 
 
@@ -212,8 +213,9 @@ KerKer 有两层记忆，存储在 `~/.kerker/memory/`：
 
 **语义记忆**（长期）
 - 记住用户偏好、项目背景、个人习惯
-- 基于 TF-IDF 的语义搜索，中英文混合分词
-- 每次对话启动时自动注入最相关的 8 条到上下文
+- 基于 BM25 的语义检索 + 时间衰减打分，中英文混合分词
+- 每轮对话动态检索最相关的条目注入上下文
+- `MEMORY_CONFIRM=true` 时被动提取先进待确认队列（`/memory pending` 查看）
 
 **情景记忆**（历史索引）
 - 自动为每次对话生成摘要并建立关键词索引
@@ -261,6 +263,8 @@ H  ─── deepseek-v4-flash · 默认 · 14 tools ───  （安静模式�
 | `MAX_CONTEXT_MESSAGES` | `40` | 上下文消息数上限 |
 | `AUTO_ROUTE` | `true` | 自动路由（智能判断是否调 Planner） |
 | `ALLOW_SHELL` | `true` | 允许 LLM 执行 Shell 命令 |
+| `PASSIVE_MEMORY` | `true` | 被动记忆（无感知从对话中提取用户习惯/偏好） |
+| `MEMORY_CONFIRM` | `false` | 记忆确认模式（被动提取先进待确认队列） |
 | `STATUSBAR_STYLE` | `a` | 状态栏样式 `a`~`h` |
 | `CURRENT_ROLE` | `默认` | 当前角色 |
 
@@ -303,7 +307,7 @@ KerKer 在多个层面内置了安全防护：
 对话操作
   ESC               中断当前响应
   """               开始多行输入（再次 """ 结束）
-  /resume           恢复上次对话 / 断点续接 / 搜索历史
+  /resume           恢复上次对话 / 断点续接（自动发送）/ 搜索历史
   /clear            清空当前上下文
   /exit             退出
 
@@ -315,7 +319,13 @@ KerKer 在多个层面内置了安全防护：
 
 角色 & 记忆
   /role             切换/新建角色
+  /project          切换项目命名空间（隔离记忆）
   /memory           查看/清空记忆
+  /memory pending   查看待确认记忆（需开启 memory_confirm）
+  /memory approve   接受待确认记忆
+  /memory reject    拒绝待确认记忆
+  /memory compress  手动触发记忆合并
+  /memory stats     记忆统计
   /memory clear     清空所有记忆
 
 外观

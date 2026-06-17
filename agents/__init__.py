@@ -129,6 +129,9 @@ def _register_as_skill(agent):
     def _on_status(text):
         if _active_spinner:
             _active_spinner.update_sub(agent.name, [text])
+        from core.progress import get_tracker
+        tracker = get_tracker()
+        tracker.add_sub_activity(agent.name, text)
 
     async def _run_agent(task):
         global _planner_used
@@ -164,6 +167,7 @@ def _register_as_skill(agent):
             else:
                 summary = _summarize_result(result)
                 tracker.add_memory(agent.name, task[:200], summary)
+                tracker.set_step_summary(agent.name, summary)
 
         except Exception as err:
             error_msg = f"[{agent.name}] 执行失败: {str(err)[:150]}"

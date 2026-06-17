@@ -182,10 +182,15 @@ def get_filtered_tool_specs(role_name=None, user_input=None, route_action=None):
                         allowed_tools.add(tool_name)
                     break
 
+    _categorized: set = set()
+    for _cat_tools in _TOOL_CATEGORIES.values():
+        _categorized.update(_cat_tools)
+
     all_specs = get_tool_specs(include_agent_only=False)
     filtered = [
         spec for spec in all_specs
         if spec["function"]["name"] in allowed_tools
+        or spec["function"]["name"] not in _categorized
     ]
 
     return filtered

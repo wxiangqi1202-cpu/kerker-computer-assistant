@@ -72,7 +72,7 @@ class Config:
     _PERSIST_KEYS = ("MODEL", "CURRENT_ROLE", "STREAM", "REASONING_EFFORT",
                      "ENABLE_THINKING", "MAX_CONTEXT_MESSAGES", "AUTO_ROUTE",
                      "PASSIVE_MEMORY", "MEMORY_CONFIRM", "CURRENT_NAMESPACE",
-                     "ALLOW_SHELL", "STATUSBAR_STYLE")
+                     "ALLOW_SHELL", "STATUSBAR_STYLE", "ANIMATION_SPEED")
 
     def __init__(self):
         self.MODEL = "deepseek-v4-flash"
@@ -88,6 +88,7 @@ class Config:
         self.CURRENT_NAMESPACE = "global"  # 当前项目命名空间
         self.ALLOW_SHELL       = True
         self.STATUSBAR_STYLE = "a"
+        self.ANIMATION_SPEED = "normal"
         self.CURRENT_ROLE = "默认"
         self.ROLES = self._build_default_roles()
         self.SYSTEM_PROMPTS = self.ROLES[self.CURRENT_ROLE]
@@ -190,6 +191,8 @@ class Config:
                 self.ALLOW_SHELL = bool(data["ALLOW_SHELL"])
             if data.get("STATUSBAR_STYLE") in ("a", "b", "c", "d", "e", "f", "g", "h"):
                 self.STATUSBAR_STYLE = data["STATUSBAR_STYLE"]
+            if data.get("ANIMATION_SPEED") in ("fast", "normal", "off"):
+                self.ANIMATION_SPEED = data["ANIMATION_SPEED"]
             user_roles = data.get("USER_ROLES", {})
             if isinstance(user_roles, dict):
                 for name, prompts in user_roles.items():

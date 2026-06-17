@@ -39,6 +39,19 @@ class ProgressStep:
     summary: str = ""
     started_at: float = 0.0
     finished_at: float = 0.0
+    sub_activities: list = None
+    rounds_running: int = 0
+
+    def __post_init__(self):
+        if self.sub_activities is None:
+            self.sub_activities = []
+
+    @property
+    def elapsed(self) -> float:
+        if self.started_at == 0:
+            return 0.0
+        end = self.finished_at if self.finished_at else time.time()
+        return end - self.started_at
 
 
 class ProgressTracker:
@@ -57,6 +70,8 @@ class ProgressTracker:
         self._finish_time: float = 0.0
         self._visible = False
         self._generation: int = 0
+        self._footer: str = ""
+        self._animation_speed: str = "normal"
 
     @property
     def mode(self):
@@ -232,7 +247,7 @@ class ProgressTracker:
         """
         推进下一个无 agent 绑定的 pending 步骤为 running。
         用于主模型通过普通工具调用执行 plan 步骤时。
-        如果没有无绑定步骤，则推进任意 pending 步骤。
+        注意：不会推进有 agent 绑定的步骤，那些由 agent_start 负责。
         """
         with self._lock:
             if self._mode != ProgressMode.PLAN_MODE:
@@ -245,19 +260,14 @@ class ProgressTracker:
                     step.status = StepStatus.RUNNING
                     step.started_at = time.time()
                     return step.name
-            for step in self._steps:
-                if step.status == StepStatus.PENDING:
-                    step.status = StepStatus.RUNNING
-                    step.started_at = time.time()
-                    return step.name
             return None
 
     def ensure_step_active(self):
         """
         确保面板实时反映进度：
-        1. 如果有 pending 步骤且无 running → 推进一个
-        2. 如果所有步骤已 done 但未 finished → 追加 "生成总结" 步骤
+        如果有 pending 步骤且无 running → 推进一个。
         每轮 API 调用开始时调用。
+        不再追加"生成总结"假步骤（由 footer 状态替代）。
         """
         with self._lock:
             if self._mode != ProgressMode.PLAN_MODE:
@@ -272,32 +282,18 @@ class ProgressTracker:
                         step.status = StepStatus.RUNNING
                         step.started_at = time.time()
                         return
-            if self._steps and not self._finished:
-                all_done = all(s.status in (StepStatus.DONE, StepStatus.ERROR) for s in self._steps)
-                if all_done:
-                    already_has_summary = any(s.name == "生成总结" for s in self._steps)
-                    if not already_has_summary:
-                        self._steps.append(ProgressStep(
-                            name="生成总结",
-                            status=StepStatus.RUNNING,
-                            started_at=time.time(),
-                        ))
 
     def complete_unbound_step(self):
         """
         完成当前 running 的无绑定步骤。
         用于一轮非 agent 工具调用结束后。
+        注意：不会完成有 agent 绑定的步骤，那些由 agent_done 负责。
         """
         with self._lock:
             if self._mode != ProgressMode.PLAN_MODE:
                 return
             for step in self._steps:
                 if step.status == StepStatus.RUNNING and step.agent == "":
-                    step.status = StepStatus.DONE
-                    step.finished_at = time.time()
-                    return
-            for step in self._steps:
-                if step.status == StepStatus.RUNNING:
                     step.status = StepStatus.DONE
                     step.finished_at = time.time()
                     return
@@ -327,15 +323,16 @@ class ProgressTracker:
                 self._steps = []
                 self._visible = False
                 self._finished = False
+                self._footer = ""
                 self._generation += 1
                 return
             for step in self._steps:
                 if step.status == StepStatus.RUNNING:
                     step.status = StepStatus.PENDING
                     step.started_at = 0.0
-            if self._steps and self._steps[-1].name == "生成总结":
-                self._steps.pop()
+                    step.sub_activities = []
             self._finished = False
+            self._footer = ""
             self._visible = bool(self._steps)
             self._generation += 1
 
@@ -349,6 +346,7 @@ class ProgressTracker:
             self._finished = False
             self._finish_time = 0.0
             self._visible = False
+            self._footer = ""
             self._generation += 1
 
     @property
@@ -370,9 +368,103 @@ class ProgressTracker:
         with self._lock:
             return [(s.name, s.status.value) for s in self._steps]
 
+    def get_rich_snapshot(self) -> list[dict]:
+        """获取包含子活动、摘要、计时的完整快照"""
+        with self._lock:
+            result = []
+            for s in self._steps:
+                result.append({
+                    "name": s.name,
+                    "status": s.status.value,
+                    "agent": s.agent,
+                    "summary": s.summary,
+                    "elapsed": s.elapsed,
+                    "sub_activities": list(s.sub_activities[-3:]),
+                })
+            return result
+
     def get_step_names(self):
         with self._lock:
             return [s.name for s in self._steps]
+
+    @property
+    def footer(self) -> str:
+        with self._lock:
+            return self._footer
+
+    def set_footer(self, text: str):
+        """设置收尾状态提示（替代"生成总结"假步骤）"""
+        with self._lock:
+            self._footer = text
+
+    def clear_footer(self):
+        with self._lock:
+            self._footer = ""
+
+    @property
+    def done_count(self) -> int:
+        with self._lock:
+            return sum(1 for s in self._steps if s.status in (StepStatus.DONE, StepStatus.ERROR))
+
+    @property
+    def total_steps(self) -> int:
+        with self._lock:
+            return len(self._steps)
+
+    def add_sub_activity(self, agent_name: str, activity: str):
+        """为当前 running 步骤添加子活动（工具调用等）"""
+        with self._lock:
+            if self._mode != ProgressMode.PLAN_MODE:
+                return
+            for step in self._steps:
+                if step.status == StepStatus.RUNNING and (
+                    step.agent == agent_name or step.agent == "" or not agent_name
+                ):
+                    step.sub_activities.append(activity)
+                    if len(step.sub_activities) > 5:
+                        step.sub_activities = step.sub_activities[-5:]
+                    return
+
+    def set_step_summary(self, agent_name: str, summary: str):
+        """设置最近完成步骤的摘要（用于面板显示）"""
+        with self._lock:
+            if self._mode != ProgressMode.PLAN_MODE:
+                return
+            for step in reversed(self._steps):
+                if step.status == StepStatus.DONE and step.agent == agent_name:
+                    step.summary = summary[:80]
+                    return
+            for step in reversed(self._steps):
+                if step.status == StepStatus.DONE and not step.summary:
+                    step.summary = summary[:80]
+                    return
+
+    def check_implicit_completion(self, tool_names_this_round: list):
+        """
+        隐式步骤完成检测：当 agent 绑定步骤在 running 但本轮未调该 agent，
+        且本轮有工具执行，则增加 rounds_running 计数。
+        超过 1 轮（即 agent 已被跳过），清除 agent 绑定使其可被 complete_unbound_step 完成。
+        """
+        with self._lock:
+            if self._mode != ProgressMode.PLAN_MODE:
+                return
+            for step in self._steps:
+                if step.status == StepStatus.RUNNING and step.agent:
+                    agent_tool = f"agent_{step.agent}"
+                    if agent_tool not in tool_names_this_round and tool_names_this_round:
+                        step.rounds_running += 1
+                        if step.rounds_running >= 2:
+                            step.agent = ""
+
+    def set_animation_speed(self, speed: str):
+        """设置动画速度: fast / normal / off"""
+        with self._lock:
+            self._animation_speed = speed if speed in ("fast", "normal", "off") else "normal"
+
+    @property
+    def animation_speed(self) -> str:
+        with self._lock:
+            return self._animation_speed
 
     def build_context_prompt(self, agent_name: str = "") -> str:
         """为子智能体构建上下文注入"""

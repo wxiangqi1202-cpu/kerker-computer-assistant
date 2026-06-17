@@ -81,8 +81,9 @@ def _try_auto_route(messages):
     return decision, None
 
 
-async def _dispatch_agent_calls(agent_calls, messages, tracker):
+async def _dispatch_agent_calls(agent_calls, messages, tracker, metrics):
     """分发 agent 调用（多个并行，单个串行）"""
+    import time as _time
     results = []
 
     if len(agent_calls) > 1:
@@ -92,34 +93,43 @@ async def _dispatch_agent_calls(agent_calls, messages, tracker):
         async def _run(tc):
             return await skills.async_call(tc["name"], tc["args"])
 
+        _start = _time.time()
         raw_results = await asyncio.gather(
             *[_run(tc) for tc in agent_calls],
             return_exceptions=True,
         )
+        _avg_ms = (_time.time() - _start) * 1000 / max(len(agent_calls), 1)
 
         for tc, raw in zip(agent_calls, raw_results):
             agent_name = tc["name"].replace("agent_", "", 1)
             if isinstance(raw, Exception):
                 tool_result = f"[{agent_name}] 执行失败: {str(raw)[:150]}"
                 tracker.agent_error(agent_name, error=tool_result[:100])
+                metrics.record_agent_call(tc["name"], _avg_ms, success=False)
             else:
                 tool_result = trim_tool_result(raw)
                 if "执行失败" in tool_result:
                     tracker.agent_error(agent_name, error=tool_result[:100])
+                    metrics.record_agent_call(tc["name"], _avg_ms, success=False)
                 else:
                     tracker.agent_done(agent_name, summary=tool_result[:100] if tool_result else "")
+                    metrics.record_agent_call(tc["name"], _avg_ms, success=True)
             results.append((tc, tool_result))
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})
     else:
         for tc in agent_calls:
             agent_name = tc["name"].replace("agent_", "", 1)
             tracker.agent_start(agent_name)
+            _start = _time.time()
             tool_result = await skills.async_call(tc["name"], tc["args"])
+            _duration_ms = (_time.time() - _start) * 1000
             tool_result = trim_tool_result(tool_result)
             if "执行失败" in tool_result:
                 tracker.agent_error(agent_name, error=tool_result[:100])
+                metrics.record_agent_call(tc["name"], _duration_ms, success=False)
             else:
                 tracker.agent_done(agent_name, summary=tool_result[:100] if tool_result else "")
+                metrics.record_agent_call(tc["name"], _duration_ms, success=True)
             results.append((tc, tool_result))
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": tool_result})
 
@@ -137,6 +147,7 @@ async def _dispatch_tool_calls(other_calls, messages, tracker, metrics):
     for tc in other_calls:
         display_name = tool_display_name(tc["name"])
         tracker.tool_start(display_name)
+        tracker.add_sub_activity("", f"🔧 {display_name}")
         _tool_start = _time.time()
         tool_result = await skills.async_call(tc["name"], tc["args"])
         tool_result = trim_tool_result(tool_result)
@@ -155,8 +166,11 @@ async def _dispatch_tool_calls(other_calls, messages, tracker, metrics):
     return results
 
 
-def _post_round_inject(messages, tracker, agent_calls):
-    """每轮工具调用后的注入：replan 检测 + prefetch 提示"""
+def _post_round_inject(messages, tracker, agent_calls, other_calls):
+    """每轮工具调用后的注入：隐式完成检测 + replan 检测 + prefetch 提示"""
+    all_tool_names = [tc["name"] for tc in agent_calls] + [tc["name"] for tc in other_calls]
+    tracker.check_implicit_completion(all_tool_names)
+
     if tracker.needs_replan:
         import agents as _agents_mod
         _agents_mod._planner_used = False
@@ -244,6 +258,7 @@ async def send(client, messages):
 
         if config.STREAM:
             result = yield_result = None
+            _buffered_done = None
             async for event in handle_stream(response):
                 if isinstance(event, dict) and event.get("_result"):
                     yield_result = event["_result"]
@@ -251,12 +266,16 @@ async def send(client, messages):
                     if not _first_token_recorded and isinstance(event, dict) and event.get("type") in ("text", "thinking"):
                         metrics.record_first_token()
                         _first_token_recorded = True
-                    if isinstance(event, dict) and event.get("type") == "done" and event.get("usage"):
-                        metrics.record_usage(event["usage"])
-                    yield event
+                    if isinstance(event, dict) and event.get("type") == "done":
+                        if event.get("usage"):
+                            metrics.record_usage(event["usage"])
+                        _buffered_done = event
+                    else:
+                        yield event
             result = yield_result
         else:
             result = None
+            _buffered_done = None
             async for event in handle_sync(response):
                 if isinstance(event, dict) and event.get("_result"):
                     result = event["_result"]
@@ -264,13 +283,18 @@ async def send(client, messages):
                     if not _first_token_recorded and isinstance(event, dict) and event.get("type") in ("text", "thinking"):
                         metrics.record_first_token()
                         _first_token_recorded = True
-                    if isinstance(event, dict) and event.get("type") == "done" and event.get("usage"):
-                        metrics.record_usage(event["usage"])
-                    yield event
+                    if isinstance(event, dict) and event.get("type") == "done":
+                        if event.get("usage"):
+                            metrics.record_usage(event["usage"])
+                        _buffered_done = event
+                    else:
+                        yield event
 
         if not result or not result["tool_calls"]:
             tracker.finish_all()
             metrics.end_turn()
+            if _buffered_done:
+                yield _buffered_done
             break
 
         metrics.record_round()
@@ -282,7 +306,7 @@ async def send(client, messages):
 
         for tc in agent_calls:
             yield {"type": "tool_exec", "name": tc["name"], "args": tc["args"]}
-        agent_results = await _dispatch_agent_calls(agent_calls, messages, tracker)
+        agent_results = await _dispatch_agent_calls(agent_calls, messages, tracker, metrics)
         for tc, tool_result in agent_results:
             yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
 
@@ -292,4 +316,4 @@ async def send(client, messages):
         for tc, tool_result in tool_results:
             yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
 
-        _post_round_inject(messages, tracker, agent_calls)
+        _post_round_inject(messages, tracker, agent_calls, other_calls)

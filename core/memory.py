@@ -828,7 +828,7 @@ class PendingMemory:
     """
     被动提取的待确认记忆队列（当 config.MEMORY_CONFIRM=True 时启用）。
     passive → pending.json → 用户 /memory approve → semantic.json
-    超过 7 天未处理自zai c动清除。
+    超过 7 天未处理自动清除。
     """
 
     _EXPIRE_DAYS = 7

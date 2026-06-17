@@ -88,6 +88,10 @@ async def render(event_stream, spinner=None, taskboard=None):
                 if not receiving_text:
                     receiving_text = True
                     spinner.update(tips=GENERATING_TIPS)
+                    from core.progress import get_tracker as _gt
+                    _trk = _gt()
+                    if _trk.has_plan and _trk.done_count == _trk.total_steps:
+                        _trk.set_footer("组织回复中...")
                 recovery.accumulate_text(event.get("content", ""))
 
             elif etype == "done":
@@ -103,7 +107,8 @@ async def render(event_stream, spinner=None, taskboard=None):
                 if taskboard:
                     from core.progress import get_tracker
                     tracker = get_tracker()
-                    if tracker.is_finished and tracker.is_visible:
+                    tracker.clear_footer()
+                    if tracker.is_finished and tracker.is_visible and tracker.animation_speed != "off":
                         wait_start = asyncio.get_event_loop().time()
                         while asyncio.get_event_loop().time() - wait_start < 2.0:
                             if taskboard.is_finishing:

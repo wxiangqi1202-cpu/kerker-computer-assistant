@@ -186,6 +186,7 @@ async def _async_main():
 
     from core.progress import get_tracker
     tracker = get_tracker()
+    tracker.set_animation_speed(config.ANIMATION_SPEED)
 
     taskboard = TaskBoard()
     taskboard.set_tracker(tracker)
@@ -225,66 +226,75 @@ async def _async_main():
     }
 
     _first_prompt = True
+    _pending_send = False  # /resume 断点续接时跳过提示直接发送
 
     while True:
         try:
-            if not _first_prompt:
+            if not _first_prompt and not _pending_send:
                 _print_status_bar(messages)
             _first_prompt = False
-            from prompt_toolkit.formatted_text import HTML
-            short = _model_short_name(config.MODEL)
-            prompt_text = HTML(
-                f'  <style fg="gray">{short}</style>'
-                f'<style fg="gray">·</style>'
-                f'<style fg="ansicyan">{config.CURRENT_ROLE}</style> › '
-            )
-            user_input = (await session.prompt_async(prompt_text)).strip()
+            if not _pending_send:
+                from prompt_toolkit.formatted_text import HTML
+                short = _model_short_name(config.MODEL)
+                prompt_text = HTML(
+                    f'  <style fg="gray">{short}</style>'
+                    f'<style fg="gray">·</style>'
+                    f'<style fg="ansicyan">{config.CURRENT_ROLE}</style> › '
+                )
+                user_input = (await session.prompt_async(prompt_text)).strip()
         except (EOFError, KeyboardInterrupt):
             _autosave(messages)
             config.save_user_config()
             _console.print("\n  [dim]再见！[/dim]")
             break
 
-        if not user_input:
+        if not user_input and not _pending_send:
             continue
 
-        if user_input.startswith('"""'):
-            first_line = user_input[3:]
-            body = await _read_multiline(session)
-            if body is None:
-                continue
-            user_input = (first_line + "\n" + body).strip() if first_line.strip() else body.strip()
-            if not user_input:
-                continue
+        if not _pending_send:
+            if user_input.startswith('"""'):
+                first_line = user_input[3:]
+                body = await _read_multiline(session)
+                if body is None:
+                    continue
+                user_input = (first_line + "\n" + body).strip() if first_line.strip() else body.strip()
+                if not user_input:
+                    continue
 
-        if user_input.startswith("/"):
-            if dispatch(user_input, ctx):
-                if ctx["should_exit"]:
-                    _autosave(messages)
-                    config.save_user_config()
-                    _console.print("  [dim]再见！[/dim]")
-                    break
-                messages = ctx["messages"]
-                api_client = ctx["api_client"]
-                continue
-            _console.print(f"   [red]未知命令: {user_input.split()[0]}[/red]")
-            _console.print("  [dim]输入 /help 查看可用命令[/dim]")
-            continue
+            if user_input.startswith("/"):
+                if dispatch(user_input, ctx):
+                    if ctx["should_exit"]:
+                        _autosave(messages)
+                        config.save_user_config()
+                        _console.print("  [dim]再见！[/dim]")
+                        break
+                    messages = ctx["messages"]
+                    api_client = ctx["api_client"]
+                    _pending_send = ctx.pop("_resume_trigger", False)
+                    if not _pending_send:
+                        continue
+                else:
+                    _console.print(f"   [red]未知命令: {user_input.split()[0]}[/red]")
+                    _console.print("  [dim]输入 /help 查看可用命令[/dim]")
+                    continue
 
-        messages.append({"role": "user", "content": user_input})
-        messages = _trim_context(messages)
-        ctx["messages"] = messages
+        if not _pending_send:
+            messages.append({"role": "user", "content": user_input})
+            messages = _trim_context(messages)
+            ctx["messages"] = messages
 
-        width = _console.width
-        display_text = user_input.split("\n")[0]
-        if "\n" in user_input:
-            display_text += " ..."
-        label = f"  › {display_text} "
-        pad_line = " " * width
-        sys.stdout.write("\033[A\r\033[K")
-        _console.print(
-            f"[white on grey23]{pad_line}\n{label}{' ' * max(0, width - len(label))}\n{pad_line}[/white on grey23]"
-        )
+            width = _console.width
+            display_text = user_input.split("\n")[0]
+            if "\n" in user_input:
+                display_text += " ..."
+            label = f"  › {display_text} "
+            pad_line = " " * width
+            sys.stdout.write("\033[A\r\033[K")
+            _console.print(
+                f"[white on grey23]{pad_line}\n{label}{' ' * max(0, width - len(label))}\n{pad_line}[/white on grey23]"
+            )
+        else:
+            _pending_send = False
 
         try:
             messages_backup = list(messages)

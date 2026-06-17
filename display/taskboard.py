@@ -1,11 +1,14 @@
 """
-任务面板 —— 纯渲染器，从 ProgressTracker 读取状态快照
+任务面板 v2 —— 纯渲染器，从 ProgressTracker 读取增强快照
 
-设计原则：
-1. TaskBoard 不持有业务状态，只负责渲染
-2. 从 ProgressTracker 获取快照后渲染为 ANSI 行
-3. 结束动画仅在 ProgressTracker.is_finished 时触发
-4. 动画期间状态已锁定，不会被新数据打断
+特性：
+1. 子活动显示（running 步骤下方展示工具调用详情）
+2. 步骤摘要（完成步骤显示一行结果摘要）
+3. 每步计时（elapsed 显示在右侧）
+4. 进度计数器（任务规划 2/5）
+5. 收尾态 footer（替代"生成总结"假步骤）
+6. 可配置动画速度（fast/normal/off）
+7. 结束收束动画
 """
 
 import threading
@@ -16,17 +19,25 @@ _BREATH_COLORS = [
     252, 250, 247, 244, 242, 240, 238, 236,
 ]
 
-_T_HOLD = 0.4
-_T_CONVERGE = 0.6
-_T_FLASH = 0.2
-_T_FADE = 0.3
-_T_TOTAL = _T_HOLD + _T_CONVERGE + _T_FLASH + _T_FADE
+_ANIM_PRESETS = {
+    "normal": {"hold": 0.4, "converge": 0.6, "flash": 0.2, "fade": 0.3},
+    "fast":   {"hold": 0.15, "converge": 0.25, "flash": 0.1, "fade": 0.1},
+    "off":    {"hold": 0.0, "converge": 0.0, "flash": 0.0, "fade": 0.0},
+}
+
+
+def _fmt_elapsed(seconds):
+    if seconds <= 0:
+        return ""
+    if seconds < 1:
+        return f"{seconds * 1000:.0f}ms"
+    return f"{seconds:.1f}s"
 
 
 class TaskBoard:
     """
-    任务面板渲染器。
-    由 ProgressTracker 驱动，自身不管理业务状态。
+    任务面板渲染器 v2。
+    由 ProgressTracker 驱动，增强显示子活动、摘要和计时。
     """
 
     def __init__(self):
@@ -57,7 +68,6 @@ class TaskBoard:
         return self._tracker.is_visible
 
     def clear(self):
-        """清除动画状态。记录当前 generation 用于检测 tracker reset。"""
         with self._lock:
             self._finish_anim_start = 0.0
             self._finishing = False
@@ -81,7 +91,7 @@ class TaskBoard:
                 return self._render_finish_anim(tick)
 
             if self._tracker.is_finished and not self._finishing:
-                snapshot = self._tracker.get_snapshot()
+                snapshot = self._tracker.get_rich_snapshot()
                 if snapshot:
                     self._finishing = True
                     self._finish_anim_start = time.time()
@@ -93,25 +103,51 @@ class TaskBoard:
         if not self._tracker.is_visible:
             return []
 
-        snapshot = self._tracker.get_snapshot()
+        snapshot = self._tracker.get_rich_snapshot()
         if not snapshot:
             return []
 
-        return self._render_steps(snapshot, tick)
+        return self._render_rich_steps(snapshot, tick)
 
-    def _render_steps(self, snapshot, tick):
-        """渲染步骤列表"""
+    def _render_rich_steps(self, snapshot, tick):
+        """渲染增强步骤列表：子活动、摘要、计时"""
         lines = []
-        for name, status in snapshot:
+        total = len(snapshot)
+        done_count = sum(1 for s in snapshot if s["status"] in ("done", "error"))
+
+        header = f"    \033[90m任务规划 ({done_count}/{total})\033[0m"
+        lines.append(header)
+
+        for step in snapshot:
+            name = step["name"]
+            status = step["status"]
+            elapsed = step["elapsed"]
+            summary = step["summary"]
+            sub_activities = step["sub_activities"]
+            elapsed_str = _fmt_elapsed(elapsed)
+
             if status == "running":
                 c = _BREATH_COLORS[tick % len(_BREATH_COLORS)]
-                lines.append(f"    \033[38;5;{c}m›\033[0m \033[97m{name}\033[0m")
+                time_part = f"  \033[90m{elapsed_str}\033[0m" if elapsed_str else ""
+                lines.append(f"    \033[38;5;{c}m›\033[0m \033[97m{name}\033[0m{time_part}")
+                for act in sub_activities[-2:]:
+                    lines.append(f"      \033[90m├ {act}\033[0m")
             elif status == "done":
-                lines.append(f"    \033[32m✓\033[0m \033[90m{name}\033[0m")
+                time_part = f"  \033[90m{elapsed_str}\033[0m" if elapsed_str else ""
+                lines.append(f"    \033[32m✓\033[0m \033[90m{name}\033[0m{time_part}")
+                if summary:
+                    lines.append(f"      \033[90m→ {summary[:60]}\033[0m")
             elif status == "error":
                 lines.append(f"    \033[31m✗\033[0m \033[90m{name}\033[0m")
+                if summary:
+                    lines.append(f"      \033[31m→ {summary[:60]}\033[0m")
             else:
                 lines.append(f"    \033[90m○\033[0m \033[90m{name}\033[0m")
+
+        footer = self._tracker.footer
+        if footer:
+            lines.append(f"    \033[90m─── {footer} ───\033[0m")
+
         return lines
 
     def _render_finish_anim(self, tick):
@@ -120,16 +156,24 @@ class TaskBoard:
         count = self._final_count
         snapshot = self._final_snapshot
 
-        if count == 0:
+        speed = self._tracker.animation_speed if self._tracker else "normal"
+        timings = _ANIM_PRESETS.get(speed, _ANIM_PRESETS["normal"])
+        t_hold = timings["hold"]
+        t_converge = timings["converge"]
+        t_flash = timings["flash"]
+        t_fade = timings["fade"]
+        t_total = t_hold + t_converge + t_flash + t_fade
+
+        if count == 0 or t_total == 0:
             self._finishing = False
             return []
 
-        if elapsed < _T_HOLD:
-            return self._render_steps(snapshot, tick)
+        if elapsed < t_hold:
+            return self._render_rich_steps(snapshot, tick)
 
-        t2 = _T_HOLD + _T_CONVERGE
+        t2 = t_hold + t_converge
         if elapsed < t2:
-            progress = (elapsed - _T_HOLD) / _T_CONVERGE
+            progress = (elapsed - t_hold) / t_converge if t_converge > 0 else 1.0
             show = max(1, round(count * (1 - progress)))
             if show <= 1:
                 g = int(34 + progress * 6)
@@ -137,19 +181,19 @@ class TaskBoard:
             lines = []
             for i in range(show):
                 fade = int(232 + (1 - progress) * 23)
-                name = snapshot[i][0] if i < len(snapshot) else ""
+                name = snapshot[i]["name"] if i < len(snapshot) else ""
                 lines.append(f"    \033[38;5;{fade}m✓ {name}\033[0m")
             return lines
 
-        t3 = t2 + _T_FLASH
+        t3 = t2 + t_flash
         if elapsed < t3:
-            fp = (elapsed - t2) / _T_FLASH
+            fp = (elapsed - t2) / t_flash if t_flash > 0 else 1.0
             color = "1;97m" if fp < 0.4 else "1;32m"
             return [f"    \033[{color}✓ {count} 项已完成\033[0m"]
 
-        t4 = t3 + _T_FADE
+        t4 = t3 + t_fade
         if elapsed < t4:
-            fp = (elapsed - t3) / _T_FADE
+            fp = (elapsed - t3) / t_fade if t_fade > 0 else 1.0
             c = int(232 + (1 - fp) * 23)
             return [f"    \033[38;5;{c}m✓ {count} 项已完成\033[0m"]
 
