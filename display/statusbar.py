@@ -5,11 +5,7 @@
 
 import sys
 
-_ESC = "\033["
-_R   = f"{_ESC}0m"
-
-def _c(code):
-    return f"{_ESC}{code}m"
+from display.theme import ESC as _ESC, RESET as _R, ansi_color as _c
 
 # ── 模块级常量（不在函数内重复分配） ─────────────────────
 _SEGS = " ▏▎▍▌▋▊▉█"   # 8 级亮度细线进度字符（索引 0 为空格占位）

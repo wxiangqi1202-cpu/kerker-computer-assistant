@@ -16,7 +16,10 @@ RESET = f"{ESC}0m"
 
 
 def _c(code):
+    """ANSI SGR escape helper: _c('32') → '\033[32m'"""
     return f"{ESC}{code}m"
+
+ansi_color = _c
 
 
 BUILTIN_THEMES = {
