@@ -185,21 +185,6 @@ def reset_planner():
     _planner_used = False
 
 
-def get_prefetch_hint():
-    """
-    预测性 prefetch：获取下一步的 agent 名称和预构建 context。
-    在当前 agent 执行期间调用，提前准备下一步参数。
-    返回 (agent_name, context_prompt) 或 (None, None)。
-    """
-    from core.progress import get_tracker
-    tracker = get_tracker()
-    next_step, next_agent = tracker.peek_next_pending()
-    if not next_step or not next_agent:
-        return None, None
-    context_prompt = tracker.build_context_prompt(agent_name=next_agent)
-    return next_agent, context_prompt
-
-
 def _auto_load():
     package = importlib.import_module("agents")
     for _, module_name, _ in pkgutil.iter_modules(package.__path__):
