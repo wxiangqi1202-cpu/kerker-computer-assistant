@@ -430,26 +430,29 @@ class ProgressTracker:
             return len(self._steps)
 
     def add_sub_activity(self, agent_name: str, activity: str):
-        """为当前 running 步骤添加子活动（工具调用等）"""
+        """为当前 running 步骤添加子活动（工具调用等）。
+        每条活动记录来源 agent_name，便于渲染时区分子任务与主进程。
+        """
         activity = activity.replace("\n", " ").replace("\r", "")
+        entry = {"text": activity, "source": agent_name}
         with self._lock:
             if self._mode != ProgressMode.PLAN_MODE:
                 return
             for step in self._steps:
                 if step.status == StepStatus.RUNNING:
                     if agent_name and step.agent == agent_name:
-                        step.sub_activities.append(activity)
+                        step.sub_activities.append(entry)
                         if len(step.sub_activities) > 5:
                             step.sub_activities = step.sub_activities[-5:]
                         return
                     elif not agent_name and step.agent == "":
-                        step.sub_activities.append(activity)
+                        step.sub_activities.append(entry)
                         if len(step.sub_activities) > 5:
                             step.sub_activities = step.sub_activities[-5:]
                         return
             for step in self._steps:
                 if step.status == StepStatus.RUNNING:
-                    step.sub_activities.append(activity)
+                    step.sub_activities.append(entry)
                     if len(step.sub_activities) > 5:
                         step.sub_activities = step.sub_activities[-5:]
                     return

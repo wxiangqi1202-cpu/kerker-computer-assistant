@@ -174,8 +174,18 @@ class TaskBoard:
                 lines.append(f"    \033[38;5;{c}m◉\033[0m \033[{name_color}m{name}\033[0m{time_part}")
 
                 if sub_activities:
-                    act = sub_activities[-1].replace("\n", " ")
-                    lines.append(f"      \033[38;5;242m↳ {_cjk_truncate(act, 50)}\033[0m")
+                    last = sub_activities[-1]
+                    if isinstance(last, dict):
+                        act = last["text"].replace("\n", " ")
+                        src = last.get("source", "")
+                        if src:
+                            label = f"\033[38;5;245m[{src}]\033[38;5;242m "
+                        else:
+                            label = ""
+                        lines.append(f"      \033[38;5;242m↳ {label}{_cjk_truncate(act, 50)}\033[0m")
+                    else:
+                        act = str(last).replace("\n", " ")
+                        lines.append(f"      \033[38;5;242m↳ {_cjk_truncate(act, 50)}\033[0m")
 
             elif status == "done":
                 since_done = now - finished_at if finished_at > 0 else 999

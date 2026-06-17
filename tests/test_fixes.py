@@ -386,7 +386,8 @@ class TestNewlineInStepName(unittest.TestCase):
         tracker.add_sub_activity("r", "doing\nstuff")
         snapshot = tracker.get_rich_snapshot()
         for act in snapshot[0]["sub_activities"]:
-            self.assertNotIn("\n", act)
+            self.assertNotIn("\n", act["text"])
+            self.assertEqual(act["source"], "r")
 
 
 if __name__ == "__main__":
