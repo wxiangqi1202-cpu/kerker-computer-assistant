@@ -21,8 +21,8 @@ from core.context import (
     trim_tool_result, compress_tool_results, should_compress,
     wrap_untrusted, is_web_tool, tool_display_name,
 )
-import skills
-from skills import is_tool_error
+from core import tool_registry
+from core.tool_registry import is_tool_error
 
 _MAX_ROUNDS = 40
 
@@ -91,7 +91,7 @@ async def _dispatch_agent_calls(agent_calls, messages, tracker, metrics):
             tracker.agent_start(tc["name"].replace("agent_", "", 1))
 
         async def _run(tc):
-            return await skills.async_call(tc["name"], tc["args"])
+            return await tool_registry.async_call(tc["name"], tc["args"])
 
         _start = _time.time()
         raw_results = await asyncio.gather(
@@ -121,7 +121,7 @@ async def _dispatch_agent_calls(agent_calls, messages, tracker, metrics):
             agent_name = tc["name"].replace("agent_", "", 1)
             tracker.agent_start(agent_name)
             _start = _time.time()
-            tool_result = await skills.async_call(tc["name"], tc["args"])
+            tool_result = await tool_registry.async_call(tc["name"], tc["args"])
             _duration_ms = (_time.time() - _start) * 1000
             tool_result = trim_tool_result(tool_result)
             if is_tool_error(tool_result):
@@ -149,7 +149,7 @@ async def _dispatch_tool_calls(other_calls, messages, tracker, metrics):
         tracker.tool_start(display_name)
         tracker.add_sub_activity("", f"🔧 {display_name}")
         _tool_start = _time.time()
-        tool_result = await skills.async_call(tc["name"], tc["args"])
+        tool_result = await tool_registry.async_call(tc["name"], tc["args"])
         tool_result = trim_tool_result(tool_result)
         if is_web_tool(tc["name"]):
             tool_result = wrap_untrusted(tool_result)
@@ -260,7 +260,7 @@ async def send(client, messages):
             if user_msgs:
                 _last_user_input = user_msgs[-1].get("content", "")
 
-        tool_specs = skills.get_filtered_tool_specs(
+        tool_specs = tool_registry.get_filtered_tool_specs(
             role_name=config.CURRENT_ROLE,
             user_input=_last_user_input,
         )
