@@ -87,7 +87,7 @@ _HALF_LIFE_DAYS = 30.0
 
 # ── 容量 & 合并阈值 ───────────────────────────────
 _MAX_MEMORIES          = 500
-_CONSOLIDATE_THRESHOLD = 8   # 同类别条目超过此数触发自动合并
+CONSOLIDATE_THRESHOLD = 8   # 同类别条目超过此数触发自动合并
 
 # ── 记忆合并提示词 ────────────────────────────────
 _CONSOLIDATION_PROMPT = """\
@@ -568,7 +568,7 @@ class SemanticMemory:
         try:
             targets = [e for e in self._entries
                        if e.get("category") == category and e.get("scope") != "session"]
-            if len(targets) < _CONSOLIDATE_THRESHOLD:
+            if len(targets) < CONSOLIDATE_THRESHOLD:
                 return 0
             try:
                 from core.client import get_background_client

@@ -17,7 +17,7 @@
 import json
 import re
 
-from core.memory import _CONSOLIDATE_THRESHOLD
+from core.memory import CONSOLIDATE_THRESHOLD
 
 
 def _extract_json_array(text: str):
@@ -207,7 +207,7 @@ async def extract_and_save(user_message: str, context_messages: list = None) -> 
                 1 for e in sem.get_by_category(cat)
                 if e.get("scope") != "session"
             )
-            if non_session >= _CONSOLIDATE_THRESHOLD:
+            if non_session >= CONSOLIDATE_THRESHOLD:
                 task = _aio.create_task(_consolidate_background(sem, cat))
                 task.add_done_callback(lambda t: None)
 
