@@ -189,11 +189,12 @@ def distill_role(name, description=""):
     )
 
     try:
-        from openai import OpenAI
         from core import config
-        from core.credentials import load_api_key
+        from core.client import get_client_pool
 
-        client = OpenAI(api_key=load_api_key(), base_url=config.get_model_base_url())
+        client = get_client_pool().get_sync()
+        if client is None:
+            raise RuntimeError("API Key 未配置")
         response = client.chat.completions.create(
             model=config.MODEL,
             messages=[

@@ -3,9 +3,8 @@ SubAgent 基类 v2 —— 共享上下文注入 + 链式调用 + 重试 + 预算
 """
 
 import asyncio
-from openai import AsyncOpenAI
 from core import config
-from core.credentials import load_api_key
+from core.client import get_client_pool
 import skills as skills_module
 
 
@@ -24,17 +23,11 @@ class SubAgent:
     timeout_seconds = 120
 
     def __init__(self):
-        self._client = None
-        self._client_base_url = None
+        pass
 
     def _get_client(self):
         model = self.model or config.MODEL
-        base_url = config.get_model_base_url(model)
-        if self._client is None or self._client_base_url != base_url:
-            api_key = load_api_key()
-            self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-            self._client_base_url = base_url
-        return self._client
+        return get_client_pool().get_async(model=model)
 
     def _get_tools(self):
         if self.allowed_skills is None:
