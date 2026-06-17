@@ -8,28 +8,8 @@
 """
 
 import json
-import requests
-from bs4 import BeautifulSoup
 from skills import register
-
-
-def _fetch_page(url, max_chars=4000):
-    """抓取网页文本"""
-    try:
-        headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
-        resp = requests.get(url, headers=headers, timeout=6)
-        if resp.status_code != 200:
-            return ""
-        resp.encoding = resp.apparent_encoding
-        soup = BeautifulSoup(resp.text, "html.parser")
-        for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
-            tag.decompose()
-        text = soup.get_text(separator="\n", strip=True)
-        lines = [line for line in text.splitlines() if line.strip()]
-        content = "\n".join(lines[:200])
-        return content[:max_chars]
-    except Exception:
-        return ""
+from skills.web_skill import fetch_page_text
 
 
 def _search_persona(name):
@@ -63,11 +43,11 @@ def _search_persona(name):
 
     with ThreadPoolExecutor(max_workers=6) as pool:
         encyclopedia_futures = {
-            pool.submit(_fetch_page, url, 3000): f"百科:{url}"
+            pool.submit(fetch_page_text, url, 3000): f"百科:{url}"
             for url in encyclopedia_urls
         }
         quote_futures = {
-            pool.submit(_fetch_page, url, 2000): f"语录:{url}"
+            pool.submit(fetch_page_text, url, 2000): f"语录:{url}"
             for url in quote_urls
         }
         quote_search_futures = {

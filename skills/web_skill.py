@@ -21,6 +21,25 @@ _HEADERS = {
 _BLOCKED_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "[::1]", "metadata.google.internal"}
 
 
+def fetch_page_text(url, max_chars=4000):
+    """抓取网页并提取纯文本（公共辅助函数，不含 SSRF 检查）。
+    成功返回文本，失败返回空字符串。
+    """
+    try:
+        resp = requests.get(url, headers=_HEADERS, timeout=8)
+        resp.raise_for_status()
+        resp.encoding = resp.apparent_encoding
+        soup = BeautifulSoup(resp.text, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+            tag.decompose()
+        text = soup.get_text(separator="\n", strip=True)
+        lines = [line for line in text.splitlines() if line.strip()]
+        content = "\n".join(lines[:200])
+        return content[:max_chars]
+    except Exception:
+        return ""
+
+
 def _is_safe_url(url):
     """检查 URL 是否安全，阻止 SSRF 攻击"""
     try:
@@ -122,28 +141,12 @@ def web_summary(url):
     """获取指定 URL 网页的文本内容"""
     if not _is_safe_url(url):
         return f"安全限制: 不允许访问该 URL（内网/受限地址）: {url}"
-    try:
-        resp = requests.get(url, headers=_HEADERS, timeout=8)
-        resp.raise_for_status()
-        resp.encoding = resp.apparent_encoding
-        soup = BeautifulSoup(resp.text, "html.parser")
-        for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
-            tag.decompose()
-        text = soup.get_text(separator="\n", strip=True)
-        lines = [line for line in text.splitlines() if line.strip()]
-        text = "\n".join(lines)
-
-        if len(text) < 50:
-            return f"该页面内容极少（可能是 JS 动态渲染），建议用 web_search 搜索相关信息。URL: {url}"
-
-        if len(text) > 4000:
-            text = text[:4000] + "\n...[已截断]"
-        title = soup.title.string.strip() if soup.title and soup.title.string else ""
-        return f"标题: {title}\n\n{text}" if title else text
-    except requests.Timeout:
-        return f"获取超时: {url}"
-    except Exception as e:
-        return f"获取网页失败: {e}"
+    text = fetch_page_text(url, max_chars=4000)
+    if not text:
+        return f"获取网页失败或内容为空: {url}"
+    if len(text) < 50:
+        return f"该页面内容极少（可能是 JS 动态渲染），建议用 web_search 搜索相关信息。URL: {url}"
+    return text
 
 
 def web_search_and_read(query):
