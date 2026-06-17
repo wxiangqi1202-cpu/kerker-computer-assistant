@@ -127,7 +127,7 @@ class TaskBoard:
         return self._render_rich_steps(snapshot, tick)
 
     def _render_rich_steps(self, snapshot, tick):
-        """渲染增强步骤列表：子活动、摘要、计时"""
+        """渲染增强步骤列表：圆形符号家族 + 精细色值"""
         lines = []
         total = len(snapshot)
         done_count = sum(1 for s in snapshot if s["status"] in ("done", "error"))
@@ -145,22 +145,22 @@ class TaskBoard:
 
             if status == "running":
                 c = _BREATH_COLORS[tick % len(_BREATH_COLORS)]
-                time_part = f"  \033[90m{elapsed_str}\033[0m" if elapsed_str else ""
-                lines.append(f"    \033[38;5;{c}m›\033[0m \033[97m{name}\033[0m{time_part}")
+                time_part = f"  \033[38;5;242m{elapsed_str}\033[0m" if elapsed_str else ""
+                lines.append(f"    \033[38;5;{c}m◉\033[0m \033[1;97m{name}\033[0m{time_part}")
                 for act in sub_activities[-2:]:
                     act = act.replace("\n", " ")
-                    lines.append(f"      \033[90m├ {act}\033[0m")
+                    lines.append(f"      \033[38;5;242m↳ {_cjk_truncate(act, 50)}\033[0m")
             elif status == "done":
-                time_part = f"  \033[90m{elapsed_str}\033[0m" if elapsed_str else ""
-                lines.append(f"    \033[32m✓\033[0m \033[90m{name}\033[0m{time_part}")
+                time_part = f"  \033[38;5;242m{elapsed_str}\033[0m" if elapsed_str else ""
+                lines.append(f"    \033[38;5;71m✓\033[0m \033[38;5;245m{name}\033[0m{time_part}")
                 if summary:
-                    lines.append(f"      \033[90m→ {_cjk_truncate(summary, 60)}\033[0m")
+                    lines.append(f"      \033[38;5;240m· {_cjk_truncate(summary, 60)}\033[0m")
             elif status == "error":
-                lines.append(f"    \033[31m✗\033[0m \033[90m{name}\033[0m")
+                lines.append(f"    \033[38;5;203m✗\033[0m \033[38;5;245m{name}\033[0m")
                 if summary:
-                    lines.append(f"      \033[31m→ {_cjk_truncate(summary, 60)}\033[0m")
+                    lines.append(f"      \033[38;5;203m· {_cjk_truncate(summary, 60)}\033[0m")
             else:
-                lines.append(f"    \033[90m○\033[0m \033[90m{name}\033[0m")
+                lines.append(f"    \033[38;5;242m○\033[0m \033[38;5;245m{name}\033[0m")
 
         footer = self._tracker.footer
         if footer:
@@ -169,7 +169,7 @@ class TaskBoard:
         return lines
 
     def _render_finish_anim(self, tick):
-        """结束收束动画：hold → converge → flash → fade"""
+        """结束收束动画：hold → converge → glow → fade"""
         elapsed = time.time() - self._finish_anim_start
         count = self._final_count
         snapshot = self._final_snapshot
@@ -189,31 +189,33 @@ class TaskBoard:
         if elapsed < t_hold:
             return self._render_rich_steps(snapshot, tick)
 
+        summary_text = f"✓ {count} 项已完成"
+
         t2 = t_hold + t_converge
         if elapsed < t2:
             progress = (elapsed - t_hold) / t_converge if t_converge > 0 else 1.0
             show = max(1, round(count * (1 - progress)))
             if show <= 1:
-                g = int(34 + progress * 6)
-                return [f"    \033[38;5;{g}m✓ {count} 项已完成\033[0m"]
+                g = int(65 + progress * 6)
+                return [f"    \033[38;5;{g}m{summary_text}\033[0m"]
             lines = []
             for i in range(show):
-                fade = int(232 + (1 - progress) * 23)
-                name = snapshot[i]["name"] if i < len(snapshot) else ""
+                fade = int(240 + (1 - progress) * 15)
+                name = snapshot[i]["name"].replace("\n", " ") if i < len(snapshot) else ""
                 lines.append(f"    \033[38;5;{fade}m✓ {name}\033[0m")
             return lines
 
         t3 = t2 + t_flash
         if elapsed < t3:
             fp = (elapsed - t2) / t_flash if t_flash > 0 else 1.0
-            color = "1;97m" if fp < 0.4 else "1;32m"
-            return [f"    \033[{color}✓ {count} 项已完成\033[0m"]
+            color = 71 if fp > 0.4 else 255
+            return [f"    \033[38;5;{color}m{summary_text}\033[0m"]
 
         t4 = t3 + t_fade
         if elapsed < t4:
             fp = (elapsed - t3) / t_fade if t_fade > 0 else 1.0
-            c = int(232 + (1 - fp) * 23)
-            return [f"    \033[38;5;{c}m✓ {count} 项已完成\033[0m"]
+            c = int(71 + fp * (238 - 71))
+            return [f"    \033[38;5;{c}m{summary_text}\033[0m"]
 
         self._finishing = False
         self._anim_done = True

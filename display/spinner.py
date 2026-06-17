@@ -197,13 +197,13 @@ class Spinner:
             tip_str = f"\033[38;5;{color}m{tip}\033[0m" if tip else ""
         else:
             tip_str = ""
-        buf.append(f"\r  {frame} {tip_str}  \033[90m{time_str}\033[0m\033[K")
+        buf.append(f"\r  {frame} {tip_str}  \033[38;5;242m{time_str}\033[0m\033[K")
 
         for sub_name, sub_line in subs:
             tip, color = sub_line.tick()
             sub_frame = SPINNER_FRAMES[(spin_idx + 3) % len(SPINNER_FRAMES)]
             tip_str = f"\033[38;5;{color}m{tip}\033[0m" if tip else ""
-            buf.append(f"\r    \033[90m└\033[0m {sub_frame} \033[90m{sub_name}\033[0m {tip_str}\033[K")
+            buf.append(f"\r    \033[38;5;238m└\033[0m {sub_frame} \033[38;5;242m{sub_name}\033[0m {tip_str}\033[K")
 
         for tl in task_lines:
             tl = tl.replace("\n", " ").replace("\r", "")
