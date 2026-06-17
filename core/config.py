@@ -227,11 +227,3 @@ class Config:
 
 config = Config()
 config.load_user_config()
-
-KERKER_HOME = config.KERKER_HOME
-HISTORY_DIR = config.HISTORY_DIR
-USER_SKILLS_DIR = config.USER_SKILLS_DIR
-CONFIG_FILE = config.CONFIG_FILE
-MODELS = config.MODELS
-PRESETS = config.PRESETS
-ROLES = config.ROLES
