@@ -40,6 +40,13 @@ AGENT_TIPS = [
     "子任务分配进行中...", "协作网络展开...",
 ]
 
+_terminal_locked = False
+
+
+def is_terminal_locked():
+    """终端是否被 spinner 的 cbreak 模式占用（此时 input() 不可用）"""
+    return _terminal_locked
+
 
 class _TipLine:
     def __init__(self, tips):
@@ -112,14 +119,17 @@ class Spinner:
         self._msg_queue.put((self.MSG_REMOVE_SUB, name))
 
     def _enter_cbreak(self):
+        global _terminal_locked
         fd = sys.stdin.fileno()
         try:
             self._old_settings = termios.tcgetattr(fd)
             tty.setcbreak(fd)
+            _terminal_locked = True
         except Exception:
             self._old_settings = None
 
     def _exit_cbreak(self):
+        global _terminal_locked
         if self._old_settings:
             fd = sys.stdin.fileno()
             try:
@@ -132,6 +142,7 @@ class Spinner:
             except Exception:
                 pass
             self._old_settings = None
+        _terminal_locked = False
 
     def _read_keys(self):
         fd = sys.stdin.fileno()

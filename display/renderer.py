@@ -134,6 +134,7 @@ async def render(event_stream, spinner=None, taskboard=None):
                     from core.progress import get_tracker
                     tracker = get_tracker()
                     tracker.clear_footer()
+                    taskboard.clear()
 
                 spinner.stop(final_message=stats)
                 recovery.stop_accumulating()

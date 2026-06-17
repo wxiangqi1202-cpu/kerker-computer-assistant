@@ -53,6 +53,12 @@ def run_shell(command):
         return "Shell 执行已被禁用。如需开启，请运行 /config shell true"
 
     if _is_dangerous(command):
+        try:
+            from display.spinner import is_terminal_locked
+            if is_terminal_locked():
+                return f"安全限制: 检测到危险命令，终端被占用时自动拒绝: {command}"
+        except ImportError:
+            pass
         if not _is_interactive():
             return f"安全限制: 检测到危险命令，非交互环境下已拒绝执行: {command}"
         import sys as _sys
