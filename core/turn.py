@@ -147,7 +147,7 @@ async def _dispatch_tool_calls(other_calls, messages, tracker, metrics):
     for tc in other_calls:
         display_name = tool_display_name(tc["name"])
         tracker.tool_start(display_name)
-        tracker.add_sub_activity("", f"🔧 {display_name}")
+        tracker.add_sub_activity("", display_name)
         _tool_start = _time.time()
         tool_result = await tool_registry.async_call(tc["name"], tc["args"])
         tool_result = trim_tool_result(tool_result)

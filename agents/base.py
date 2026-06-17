@@ -153,7 +153,7 @@ class SubAgent:
 
             for tc in parsed_calls:
                 if on_status:
-                    on_status(f"🔧 {tc['name']}")
+                    on_status(tc['name'])
                 result = await tool_registry.async_call(tc["name"], tc["args"])
                 if on_status:
                     first_line = (result or "").strip().split("\n")[0][:50]
