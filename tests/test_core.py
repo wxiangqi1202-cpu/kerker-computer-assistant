@@ -59,8 +59,8 @@ class TestRouter(unittest.TestCase):
 
 class TestExtractFirstJson(unittest.TestCase):
     def setUp(self):
-        from agents import _extract_first_json
-        self._extract = _extract_first_json
+        from core.json_utils import extract_json_object
+        self._extract = extract_json_object
 
     def test_basic_json(self):
         text = 'some text {"key": "value"} more text'

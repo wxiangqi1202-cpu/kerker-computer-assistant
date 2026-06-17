@@ -15,6 +15,7 @@ import pkgutil
 
 import skills as skills_module
 from agents.base import SubAgent
+from core.json_utils import extract_json_object
 
 _registry = {}
 _active_spinner = None
@@ -59,40 +60,10 @@ def _is_similar(a, b):
     return False
 
 
-def _extract_first_json(text):
-    """从文本中提取第一个完整的 JSON 对象（括号配对）"""
-    start = text.find("{")
-    if start < 0:
-        return None
-    depth = 0
-    in_string = False
-    escape = False
-    for i in range(start, len(text)):
-        ch = text[i]
-        if escape:
-            escape = False
-            continue
-        if ch == '\\':
-            escape = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch == '{':
-            depth += 1
-        elif ch == '}':
-            depth -= 1
-            if depth == 0:
-                return text[start:i + 1]
-    return None
-
-
 def _parse_planner_result(text):
     """从 planner 返回文本中提取第一个完整 JSON，解析任务列表，模糊去重"""
     try:
-        json_str = _extract_first_json(text)
+        json_str = extract_json_object(text)
         if not json_str:
             return []
         data = json.loads(json_str)

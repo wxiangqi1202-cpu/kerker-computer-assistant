@@ -572,7 +572,7 @@ class SemanticMemory:
                 return 0
             try:
                 from core.client import get_background_client
-                from core.extractor import _extract_json_array
+                from core.json_utils import extract_json_array
 
                 client = get_background_client(model="deepseek-v4-flash")
                 if not client:
@@ -594,7 +594,7 @@ class SemanticMemory:
                 except Exception:
                     return 0
                 raw      = resp.choices[0].message.content or "[]"
-                json_str = _extract_json_array(raw)
+                json_str = extract_json_array(raw)
                 if not json_str:
                     return 0
                 consolidated = [c for c in json.loads(json_str)

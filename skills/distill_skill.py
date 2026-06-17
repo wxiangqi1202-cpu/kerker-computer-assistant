@@ -224,8 +224,8 @@ def distill_role(name, description=""):
         )
         result_text = response.choices[0].message.content or ""
 
-        from agents import _extract_first_json
-        json_str = _extract_first_json(result_text)
+        from core.json_utils import extract_json_object
+        json_str = extract_json_object(result_text)
         if json_str:
             data = json.loads(json_str)
             if "prompts" in data and len(data.get("prompts", [])) >= 3:
