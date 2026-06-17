@@ -36,6 +36,8 @@ def save_api_key(key):
         os.chmod(CREDENTIALS_FILE, stat.S_IRUSR | stat.S_IWUSR)
     except Exception:
         pass
+    from core.client import get_client_pool
+    get_client_pool().invalidate()
 
 
 def has_api_key():

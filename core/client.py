@@ -2,7 +2,7 @@
 API 客户端 —— 纯网络层
 
 职责：
-- 创建 AsyncOpenAI 客户端
+- ClientPool: 统一的 AsyncOpenAI/OpenAI 客户端池化管理
 - 带重试的 API 调用
 - 构建 API 请求参数
 - 响应解析（流式 / 同步）
@@ -11,40 +11,100 @@ API 客户端 —— 纯网络层
 """
 
 import asyncio
-from openai import AsyncOpenAI, APIStatusError, APIConnectionError, APITimeoutError
+import threading
+from openai import AsyncOpenAI, OpenAI, APIStatusError, APIConnectionError, APITimeoutError
 from core import config
 from core.credentials import load_api_key
 
 _API_MAX_RETRIES = 3
 _API_RETRY_BASE_DELAY = 1.0
 
-_bg_clients = {}
+
+class ClientPool:
+    """统一的 OpenAI 客户端池，按 (base_url, timeout, sync) 缓存复用。
+    API Key 变更时调用 invalidate() 清空全部缓存。
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._async_clients: dict[tuple, AsyncOpenAI] = {}
+        self._sync_clients: dict[tuple, OpenAI] = {}
+        self._api_key_snapshot: str = ""
+
+    def _check_key(self):
+        """如果 API Key 已变更，清空全部缓存。"""
+        current_key = load_api_key()
+        if current_key != self._api_key_snapshot:
+            self._async_clients.clear()
+            self._sync_clients.clear()
+            self._api_key_snapshot = current_key
+
+    def get_async(self, model=None, timeout=None) -> AsyncOpenAI | None:
+        """获取 AsyncOpenAI 客户端，按 (base_url, timeout) 缓存。
+        如果 API Key 未配置返回 None。
+        """
+        api_key = load_api_key()
+        if not api_key:
+            return None
+        base_url = config.get_model_base_url(model)
+        cache_key = (base_url, timeout)
+        with self._lock:
+            self._check_key()
+            if cache_key not in self._async_clients:
+                kwargs = dict(api_key=api_key, base_url=base_url)
+                if timeout is not None:
+                    kwargs["timeout"] = timeout
+                self._async_clients[cache_key] = AsyncOpenAI(**kwargs)
+            return self._async_clients[cache_key]
+
+    def get_sync(self, model=None, timeout=None) -> OpenAI | None:
+        """获取同步 OpenAI 客户端，按 (base_url, timeout) 缓存。
+        如果 API Key 未配置返回 None。
+        """
+        api_key = load_api_key()
+        if not api_key:
+            return None
+        base_url = config.get_model_base_url(model)
+        cache_key = (base_url, timeout)
+        with self._lock:
+            self._check_key()
+            if cache_key not in self._sync_clients:
+                kwargs = dict(api_key=api_key, base_url=base_url)
+                if timeout is not None:
+                    kwargs["timeout"] = timeout
+                self._sync_clients[cache_key] = OpenAI(**kwargs)
+            return self._sync_clients[cache_key]
+
+    def invalidate(self):
+        """API Key 或 provider 变更后调用，清空所有缓存的客户端。"""
+        with self._lock:
+            self._async_clients.clear()
+            self._sync_clients.clear()
+            self._api_key_snapshot = ""
+
+
+_pool = ClientPool()
+
+
+def get_client_pool() -> ClientPool:
+    return _pool
 
 
 def get_background_client(model="deepseek-v4-flash", timeout=30.0):
-    """获取后台任务共享客户端（被动提取、记忆合并等），按 base_url 缓存复用。
-    避免每次后台任务都新建+关闭客户端的开销。
-    """
-    base_url = config.get_model_base_url(model)
-    cache_key = base_url
-    if cache_key in _bg_clients:
-        return _bg_clients[cache_key]
-    api_key = load_api_key()
-    if not api_key:
-        return None
-    client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
-    _bg_clients[cache_key] = client
-    return client
+    """获取后台任务共享客户端，委托给 ClientPool。"""
+    return _pool.get_async(model=model, timeout=timeout)
 
 
 def create_client():
-    """创建 AsyncOpenAI 客户端"""
-    api_key = load_api_key()
-    if not api_key:
+    """获取主对话 AsyncOpenAI 客户端，委托给 ClientPool。"""
+    client = _pool.get_async()
+    if client is None:
         print("未配置 API Key，请运行 kerker 进行首次配置。")
         api_key = input("API Key: ").strip()
-    base_url = config.get_model_base_url()
-    return AsyncOpenAI(api_key=api_key, base_url=base_url)
+        from core.credentials import save_api_key
+        save_api_key(api_key)
+        client = _pool.get_async()
+    return client
 
 
 async def api_call_with_retry(client, kwargs):
