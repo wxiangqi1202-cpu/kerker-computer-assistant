@@ -97,6 +97,9 @@ async def render(event_stream, spinner=None, taskboard=None):
             elif etype == "tool_result":
                 pass
 
+            elif etype == "summarizing":
+                spinner.update(tips=["等待模型生成最终回复..."])
+
             elif etype == "text":
                 if not receiving_text:
                     receiving_text = True
@@ -104,7 +107,7 @@ async def render(event_stream, spinner=None, taskboard=None):
                     from core.progress import get_tracker as _gt
                     _trk = _gt()
                     if _trk.has_plan and _trk.total_steps > 0 and _trk.done_count >= _trk.total_steps:
-                        _trk.set_footer("组织回复中...")
+                        _trk.set_footer("正在输出最终回复...")
                 recovery.accumulate_text(event.get("content", ""))
 
             elif etype == "done":

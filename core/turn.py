@@ -314,3 +314,7 @@ async def send(client, messages):
             yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
 
         _post_round_inject(working, tracker, agent_calls, other_calls)
+
+        if tracker.has_plan and tracker.done_count >= tracker.total_steps:
+            tracker.set_footer("等待模型生成最终回复...")
+            yield {"type": "summarizing"}
