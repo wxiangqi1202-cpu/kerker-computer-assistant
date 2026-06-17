@@ -22,6 +22,8 @@ _registry = {}
 _TOOL_MAX_RETRIES = 2
 _TOOL_RETRY_DELAY = 0.5
 
+_TOOL_ERROR_PREFIX = "[tool_error] "
+
 _specs_cache = None
 _specs_cache_all = None
 
@@ -79,6 +81,16 @@ def _classify_error(error: Exception) -> str:
         return "fatal"
 
     return "fatal"
+
+
+def is_tool_error(result: str) -> bool:
+    """判断工具返回结果是否为框架产生的错误信息（非正常业务输出）"""
+    return isinstance(result, str) and result.startswith(_TOOL_ERROR_PREFIX)
+
+
+def _make_error(msg: str) -> str:
+    """生成带错误标记前缀的错误信息"""
+    return f"{_TOOL_ERROR_PREFIX}{msg}"
 
 
 def register(name, description, parameters, func, agent_only=False):
@@ -203,16 +215,16 @@ def get_skill_names():
 
 def call(name, arguments_json):
     if name not in _registry:
-        return f"未知技能: {name}"
+        return _make_error(f"未知技能: {name}")
     try:
         args = json.loads(arguments_json) if arguments_json else {}
     except json.JSONDecodeError as err:
-        return f"参数解析失败（模型返回了不完整的 JSON）: {err}"
+        return _make_error(f"参数解析失败（模型返回了不完整的 JSON）: {err}")
     try:
         result = _registry[name]["func"](**args)
         return str(result)
     except Exception as err:
-        return f"技能 {name} 执行出错: {err}"
+        return _make_error(f"技能 {name} 执行出错: {err}")
 
 
 async def async_call(name, arguments_json):
@@ -222,11 +234,11 @@ async def async_call(name, arguments_json):
     不可重试错误立即返回错误信息。
     """
     if name not in _registry:
-        return f"未知技能: {name}"
+        return _make_error(f"未知技能: {name}")
     try:
         args = json.loads(arguments_json) if arguments_json else {}
     except json.JSONDecodeError as err:
-        return f"参数解析失败（模型返回了不完整的 JSON）: {err}"
+        return _make_error(f"参数解析失败（模型返回了不完整的 JSON）: {err}")
 
     func = _registry[name]["func"]
     last_error = None
@@ -243,13 +255,13 @@ async def async_call(name, arguments_json):
             error_class = _classify_error(err)
 
             if error_class == "fatal":
-                return f"技能 {name} 执行出错: {err}"
+                return _make_error(f"技能 {name} 执行出错: {err}")
 
             if attempt < _TOOL_MAX_RETRIES:
                 delay = _TOOL_RETRY_DELAY * (2 ** attempt)
                 await asyncio.sleep(delay)
             else:
-                return f"技能 {name} 重试 {_TOOL_MAX_RETRIES} 次后仍失败: {err}"
+                return _make_error(f"技能 {name} 重试 {_TOOL_MAX_RETRIES} 次后仍失败: {err}")
 
 
 def _auto_load():

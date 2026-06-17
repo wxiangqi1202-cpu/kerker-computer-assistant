@@ -19,6 +19,24 @@ import skills
 _API_MAX_RETRIES = 3
 _API_RETRY_BASE_DELAY = 1.0
 
+_bg_clients = {}
+
+
+def get_background_client(model="deepseek-v4-flash", timeout=30.0):
+    """获取后台任务共享客户端（被动提取、记忆合并等），按 base_url 缓存复用。
+    避免每次后台任务都新建+关闭客户端的开销。
+    """
+    base_url = config.get_model_base_url(model)
+    cache_key = base_url
+    if cache_key in _bg_clients:
+        return _bg_clients[cache_key]
+    api_key = load_api_key()
+    if not api_key:
+        return None
+    client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
+    _bg_clients[cache_key] = client
+    return client
+
 
 def create_client():
     """创建 AsyncOpenAI 客户端"""

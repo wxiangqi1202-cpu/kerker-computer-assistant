@@ -9,7 +9,7 @@
 """
 
 _TOOL_RESULT_MAX_CHARS = 800
-_COMPRESS_AT_ROUNDS = (5, 10, 15)
+_COMPRESS_INTERVAL = 5
 _WEB_TOOL_NAMES = frozenset({"web_search", "web_summary", "web_search_and_read"})
 
 
@@ -52,8 +52,8 @@ def compress_tool_results(messages, keep_recent=4):
 
 
 def should_compress(round_num):
-    """判断当前轮次是否应该触发压缩"""
-    return round_num in _COMPRESS_AT_ROUNDS
+    """判断当前轮次是否应该触发压缩（每 _COMPRESS_INTERVAL 轮一次）"""
+    return round_num > 0 and round_num % _COMPRESS_INTERVAL == 0
 
 
 def wrap_untrusted(content):

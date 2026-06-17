@@ -205,6 +205,15 @@ def clear_plan():
     get_tracker().reset()
 
 
+def reset_planner():
+    """重置 planner 使用标志，允许下次重新规划。
+    所有需要重置 _planner_used 的地方统一调用此函数，
+    而非直接修改 agents._planner_used。
+    """
+    global _planner_used
+    _planner_used = False
+
+
 def get_prefetch_hint():
     """
     预测性 prefetch：获取下一步的 agent 名称和预构建 context。

@@ -571,18 +571,13 @@ class SemanticMemory:
             if len(targets) < _CONSOLIDATE_THRESHOLD:
                 return 0
             try:
-                from openai import AsyncOpenAI
-                from core.credentials import load_api_key
+                from core.client import get_background_client
                 from core.extractor import _extract_json_array
 
-                api_key = load_api_key()
-                if not api_key:
+                client = get_background_client(model="deepseek-v4-flash")
+                if not client:
                     return 0
 
-                client = AsyncOpenAI(
-                    api_key=api_key,
-                    base_url=config.get_model_base_url("deepseek-v4-flash"),
-                )
                 try:
                     content_list = "\n".join(f"- {e['content']}" for e in targets[:15])
                     prompt = _CONSOLIDATION_PROMPT.format(
@@ -596,8 +591,8 @@ class SemanticMemory:
                         ],
                         stream=False, max_tokens=500, temperature=0.1,
                     )
-                finally:
-                    await client.close()
+                except Exception:
+                    return 0
                 raw      = resp.choices[0].message.content or "[]"
                 json_str = _extract_json_array(raw)
                 if not json_str:

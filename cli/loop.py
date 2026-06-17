@@ -208,16 +208,6 @@ async def _async_main():
     if epi_prompt:
         messages.append({"role": "system", "content": epi_prompt})
 
-    role_list = ", ".join(config.ROLES.keys())
-    messages.append({"role": "system", "content":
-        f"[已有角色] 当前: {config.CURRENT_ROLE}。可切换: {role_list}。\n"
-        "角色操作规则（必须遵守）：\n"
-        "- 切换已有角色 → 调 switch_role\n"
-        "- 创建新角色 → 调 distill_role 提取特征，然后调 save_distilled_role 保存并切换\n"
-        "- 绝对不要直接用对话方式'扮演'角色，必须通过工具创建/切换后再以该角色身份回答\n"
-        "- 只有 save_distilled_role 成功后，角色才算真正生效"
-    })
-
     show_welcome()
 
     ctx = {

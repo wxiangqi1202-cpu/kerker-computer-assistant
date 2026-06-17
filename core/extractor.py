@@ -128,18 +128,12 @@ async def extract_and_save(user_message: str, context_messages: list = None) -> 
         return []
 
     try:
-        from openai import AsyncOpenAI
-        from core.credentials import load_api_key
+        from core.client import get_background_client
         from core.memory import get_semantic, _write_lock
 
-        api_key = load_api_key()
-        if not api_key:
+        client = get_background_client(model="deepseek-v4-flash")
+        if not client:
             return []
-
-        client = AsyncOpenAI(
-            api_key=api_key,
-            base_url=config.get_model_base_url("deepseek-v4-flash"),
-        )
 
         try:
             context_str = "无"
@@ -167,8 +161,8 @@ async def extract_and_save(user_message: str, context_messages: list = None) -> 
                 max_tokens=400,
                 temperature=0.1,
             )
-        finally:
-            await client.close()
+        except Exception:
+            return []
 
         raw = resp.choices[0].message.content or "[]"
         json_str = _extract_json_array(raw)

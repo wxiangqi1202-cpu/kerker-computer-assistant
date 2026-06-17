@@ -156,7 +156,7 @@ async def render(event_stream, spinner=None, taskboard=None):
                 taskboard.clear()
             spinner.stop()
             tracker.pause_on_interrupt()
-            agents._planner_used = False
+            agents.reset_planner()
             has_partial = recovery.has_state()
             hint = " — /resume 可续接" if has_partial else ""
             _out.write_flush(f"\n  \033[2m⏹ 已中断 (ESC){hint}\033[0m\n\n")
@@ -175,7 +175,7 @@ async def render(event_stream, spinner=None, taskboard=None):
                     taskboard.clear()
                 spinner.stop()
                 tracker.pause_on_interrupt()
-                agents._planner_used = False
+                agents.reset_planner()
             else:
                 if taskboard:
                     taskboard.clear()

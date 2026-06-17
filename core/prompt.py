@@ -10,6 +10,15 @@ System Prompt 组装 —— 管理 messages 中的系统消息
 
 from core import config
 
+PREFIX_AUTO_ROUTE = "[自动路由]"
+PREFIX_EXEC_HINT = "[执行提示]"
+PREFIX_EXEC_FEEDBACK = "[执行反馈]"
+PREFIX_ROLE_INFO = "[已有角色]"
+PREFIX_RELEVANT_MEMORY = "[相关记忆]"
+PREFIX_USER_MEMORY = "[用户记忆]"
+_ROUTE_PREFIXES = (PREFIX_AUTO_ROUTE, PREFIX_EXEC_HINT, PREFIX_EXEC_FEEDBACK)
+_ENV_PREFIXES = ("[当前系统可用工具]", "[以下是更早", "[近期对话摘要]")
+
 
 def sync_system_messages(messages, route_action=None):
     """
@@ -37,9 +46,9 @@ def sync_system_messages(messages, route_action=None):
     env_msgs = []
     for m in old_system:
         content = m["content"]
-        if content.startswith("[自动路由]") or content.startswith("[已有角色]"):
+        if content.startswith(PREFIX_AUTO_ROUTE) or content.startswith(PREFIX_ROLE_INFO):
             continue
-        if any(content.startswith(p) for p in ("[当前系统可用工具]", "[以下是更早", "[近期对话摘要]")):
+        if any(content.startswith(p) for p in _ENV_PREFIXES):
             env_msgs.append(m)
         else:
             old_role_contents.add(content)
@@ -61,7 +70,7 @@ def clean_route_messages(messages):
     while i < len(messages):
         content = messages[i].get("content", "")
         if messages[i].get("role") == "system" and any(
-            content.startswith(p) for p in ("[自动路由]", "[执行提示]", "[执行反馈]")
+            content.startswith(p) for p in _ROUTE_PREFIXES
         ):
             messages.pop(i)
         else:
@@ -72,7 +81,7 @@ def _update_role_info(messages):
     """更新 [已有角色] 系统消息"""
     role_list = ", ".join(config.ROLES.keys())
     role_info = (
-        f"[已有角色] 当前: {config.CURRENT_ROLE}。可切换: {role_list}。\n"
+        f"{PREFIX_ROLE_INFO} 当前: {config.CURRENT_ROLE}。可切换: {role_list}。\n"
         "角色操作规则（必须遵守）：\n"
         "- 切换已有角色 → 调 switch_role\n"
         "- 创建新角色 → 调 distill_role 提取特征，然后调 save_distilled_role 保存并切换\n"
@@ -80,7 +89,7 @@ def _update_role_info(messages):
         "- 只有 save_distilled_role 成功后，角色才算真正生效"
     )
     existing = [i for i, m in enumerate(messages)
-                if m.get("role") == "system" and m.get("content", "").startswith("[已有角色]")]
+                if m.get("role") == "system" and m.get("content", "").startswith(PREFIX_ROLE_INFO)]
     if existing:
         messages[existing[0]]["content"] = role_info
     else:
@@ -103,7 +112,7 @@ def _inject_relevant_memory(messages):
         m for m in messages
         if not (m["role"] == "system" and
                 any(m.get("content", "").startswith(p)
-                    for p in ("[相关记忆]", "[用户记忆]")))
+                    for p in (PREFIX_RELEVANT_MEMORY, PREFIX_USER_MEMORY)))
     ]
 
     if not last_q or len(last_q) < 6:
@@ -124,7 +133,7 @@ def _inject_relevant_memory(messages):
     grouped = {}
     for entry in relevant:
         grouped.setdefault(entry.get("category", "事实"), []).append(entry["content"])
-    lines = ["[相关记忆]"]
+    lines = [PREFIX_RELEVANT_MEMORY]
     for cat, items in grouped.items():
         lines.append(f"  [{cat}]")
         for item in items:

@@ -16,12 +16,13 @@
 import asyncio
 from core import config
 from core.client import api_call_with_retry, build_kwargs, handle_stream, handle_sync
-from core.prompt import sync_system_messages, clean_route_messages
+from core.prompt import sync_system_messages, clean_route_messages, PREFIX_AUTO_ROUTE, PREFIX_EXEC_HINT, PREFIX_EXEC_FEEDBACK
 from core.context import (
     trim_tool_result, compress_tool_results, should_compress,
     wrap_untrusted, is_web_tool, tool_display_name,
 )
 import skills
+from skills import is_tool_error
 
 _MAX_ROUNDS = 40
 
@@ -49,7 +50,7 @@ def _try_auto_route(messages):
     if decision.action == RouteDecision.PLAN:
         if decision.reason == "算子任务强制规划":
             directive = (
-                "[自动路由] 检测到算子开发/调试任务。必须先调用 agent_planner 进行任务规划，"
+                f"{PREFIX_AUTO_ROUTE} 检测到算子开发/调试任务。必须先调用 agent_planner 进行任务规划，"
                 "然后严格按照规划步骤逐个调用相应子智能体执行（ascend_dev / ascend_debug）。"
                 "不要跳过规划直接开发，不要一次性完成所有步骤。"
                 "每完成一个步骤等返回后再执行下一个。"
@@ -64,7 +65,7 @@ def _try_auto_route(messages):
                     step_lines.append(f"  {i}. {step.name} → 调用 {agent_hint}")
                 plan_detail = "\n".join(step_lines)
                 directive = (
-                    f"[自动路由] 继续执行上轮规划。以下是完整规划，请严格按顺序执行:\n"
+                    f"{PREFIX_AUTO_ROUTE} 继续执行上轮规划。以下是完整规划，请严格按顺序执行:\n"
                     f"{plan_detail}\n\n"
                     f"请立即调用第一个待执行步骤对应的子智能体。"
                     f"每次只调一个，等返回后再调下一个。全部完成后给出总结。"
@@ -72,9 +73,9 @@ def _try_auto_route(messages):
                 if context_prompt:
                     directive += f"\n\n{context_prompt}"
             else:
-                directive = "[自动路由] 用户要求继续，请根据上下文继续执行任务。"
+                directive = f"{PREFIX_AUTO_ROUTE} 用户要求继续，请根据上下文继续执行任务。"
         else:
-            directive = "[自动路由] 检测到需要规划的任务。请调用 agent_planner 进行任务规划。"
+            directive = f"{PREFIX_AUTO_ROUTE} 检测到需要规划的任务。请调用 agent_planner 进行任务规划。"
         return decision, [{"role": "system", "content": directive}]
 
     return decision, None
@@ -107,7 +108,7 @@ async def _dispatch_agent_calls(agent_calls, messages, tracker, metrics):
                 metrics.record_agent_call(tc["name"], _avg_ms, success=False)
             else:
                 tool_result = trim_tool_result(raw)
-                if "执行失败" in tool_result:
+                if is_tool_error(tool_result):
                     tracker.agent_error(agent_name, error=tool_result[:100])
                     metrics.record_agent_call(tc["name"], _avg_ms, success=False)
                 else:
@@ -123,7 +124,7 @@ async def _dispatch_agent_calls(agent_calls, messages, tracker, metrics):
             tool_result = await skills.async_call(tc["name"], tc["args"])
             _duration_ms = (_time.time() - _start) * 1000
             tool_result = trim_tool_result(tool_result)
-            if "执行失败" in tool_result:
+            if is_tool_error(tool_result):
                 tracker.agent_error(agent_name, error=tool_result[:100])
                 metrics.record_agent_call(tc["name"], _duration_ms, success=False)
             else:
@@ -153,7 +154,7 @@ async def _dispatch_tool_calls(other_calls, messages, tracker, metrics):
         if is_web_tool(tc["name"]):
             tool_result = wrap_untrusted(tool_result)
         _tool_duration = (_time.time() - _tool_start) * 1000
-        _tool_success = "执行出错" not in tool_result and "执行失败" not in tool_result
+        _tool_success = not is_tool_error(tool_result)
         metrics.record_tool_call(tc["name"], _tool_duration, success=_tool_success)
         tracker.tool_done(display_name)
         results.append((tc, tool_result))
@@ -172,11 +173,11 @@ def _post_round_inject(messages, tracker, agent_calls, other_calls):
 
     if tracker.needs_replan:
         import agents as _agents_mod
-        _agents_mod._planner_used = False
+        _agents_mod.reset_planner()
         messages.append({
             "role": "system",
             "content": (
-                "[执行反馈] 多个步骤执行失败，当前规划可能不合理。"
+                f"{PREFIX_EXEC_FEEDBACK} 多个步骤执行失败，当前规划可能不合理。"
                 "请重新调用 agent_planner 制定新的规划方案，"
                 "或者调整策略直接完成剩余任务。"
             ),
@@ -187,7 +188,7 @@ def _post_round_inject(messages, tracker, agent_calls, other_calls):
             messages.append({
                 "role": "system",
                 "content": (
-                    f"[执行提示] 上一步已完成。下一步: \"{next_step}\"，"
+                    f"{PREFIX_EXEC_HINT} 上一步已完成。下一步: \"{next_step}\"，"
                     f"请立即调用 agent_{next_agent} 执行，不要停下来询问用户。"
                 ),
             })
