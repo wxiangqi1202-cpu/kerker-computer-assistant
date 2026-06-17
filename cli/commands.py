@@ -87,7 +87,7 @@ def cmd_model(args, ctx):
 
 def _apply_model(model_name, ctx):
     config.MODEL = model_name
-    config.BASE_URL = config.MODELS[model_name]["base_url"]
+    config.BASE_URL = config.get_model_base_url(model_name)
     ctx["api_client"] = create_client()
     config.save_user_config()
     _console.print(f"  [green]✓ 模型: {config.MODELS[model_name]['name']}[/green]")

@@ -193,7 +193,7 @@ def distill_role(name, description=""):
         from core import config
         from core.credentials import load_api_key
 
-        client = OpenAI(api_key=load_api_key(), base_url=config.BASE_URL)
+        client = OpenAI(api_key=load_api_key(), base_url=config.get_model_base_url())
         response = client.chat.completions.create(
             model=config.MODEL,
             messages=[

@@ -29,7 +29,7 @@ class SubAgent:
 
     def _get_client(self):
         model = self.model or config.MODEL
-        base_url = config.MODELS.get(model, {}).get("base_url", config.BASE_URL)
+        base_url = config.get_model_base_url(model)
         if self._client is None or self._client_base_url != base_url:
             api_key = load_api_key()
             self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
