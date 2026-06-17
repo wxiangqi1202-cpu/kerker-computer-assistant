@@ -10,6 +10,10 @@ System Prompt 组装 —— 管理 messages 中的系统消息
 
 from core import config
 
+def build_system_messages():
+    """根据当前角色构建 system 消息列表"""
+    return [{"role": "system", "content": p} for p in config.SYSTEM_PROMPTS]
+
 PREFIX_AUTO_ROUTE = "[自动路由]"
 PREFIX_EXEC_HINT = "[执行提示]"
 PREFIX_EXEC_FEEDBACK = "[执行反馈]"
@@ -27,7 +31,6 @@ def sync_system_messages(messages, route_action=None):
       - "direct": 跳过行为 directives（AGENT/EXPLORE），省 ~400 token
       - 其他: 注入完整 directives
     """
-    from cli.commands import build_system_messages
     current_system = build_system_messages()
 
     if route_action == "direct":

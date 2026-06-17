@@ -17,7 +17,7 @@ from display import Spinner, TaskBoard, render
 from display.spinner import CONNECTING_TIPS
 from cli.completer import create_session
 from cli.registry import dispatch
-from cli.commands import build_system_messages
+from core.prompt import build_system_messages
 from cli.welcome import show_welcome
 
 _console = Console()

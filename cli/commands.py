@@ -17,12 +17,9 @@ import skills
 import agents as agents_module
 from cli.registry import command
 from cli.picker import pick
+from core.prompt import build_system_messages
 
 _console = Console()
-
-
-def build_system_messages():
-    return [{"role": "system", "content": p} for p in config.SYSTEM_PROMPTS]
 
 
 @command("/help", "显示帮助信息")
