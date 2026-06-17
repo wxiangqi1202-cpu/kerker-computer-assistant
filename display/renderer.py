@@ -134,16 +134,6 @@ async def render(event_stream, spinner=None, taskboard=None):
                     from core.progress import get_tracker
                     tracker = get_tracker()
                     tracker.clear_footer()
-                    if tracker.is_finished and tracker.is_visible and tracker.animation_speed != "off":
-                        wait_start = asyncio.get_running_loop().time()
-                        while asyncio.get_running_loop().time() - wait_start < 2.0:
-                            if taskboard.is_finishing:
-                                break
-                            await asyncio.sleep(0.05)
-                        while taskboard.is_finishing:
-                            await asyncio.sleep(0.06)
-                            if asyncio.get_running_loop().time() - wait_start > 3.0:
-                                break
 
                 spinner.stop(final_message=stats)
                 recovery.stop_accumulating()

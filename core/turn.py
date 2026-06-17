@@ -20,6 +20,7 @@ from core.prompt import sync_system_messages, clean_route_messages, PREFIX_AUTO_
 from core.context import (
     trim_tool_result, compress_tool_results, should_compress,
     wrap_untrusted, is_web_tool, tool_display_name,
+    _AGENT_RESULT_MAX_CHARS,
 )
 from core import tool_registry
 from core.tool_registry import is_tool_error
@@ -107,7 +108,7 @@ async def _dispatch_agent_calls(agent_calls, messages, tracker, metrics):
                 tracker.agent_error(agent_name, error=tool_result[:100])
                 metrics.record_agent_call(tc["name"], _avg_ms, success=False)
             else:
-                tool_result = trim_tool_result(raw)
+                tool_result = trim_tool_result(raw, max_chars=_AGENT_RESULT_MAX_CHARS)
                 if is_tool_error(tool_result):
                     tracker.agent_error(agent_name, error=tool_result[:100])
                     metrics.record_agent_call(tc["name"], _avg_ms, success=False)
@@ -123,7 +124,7 @@ async def _dispatch_agent_calls(agent_calls, messages, tracker, metrics):
             _start = _time.time()
             tool_result = await tool_registry.async_call(tc["name"], tc["args"])
             _duration_ms = (_time.time() - _start) * 1000
-            tool_result = trim_tool_result(tool_result)
+            tool_result = trim_tool_result(tool_result, max_chars=_AGENT_RESULT_MAX_CHARS)
             if is_tool_error(tool_result):
                 tracker.agent_error(agent_name, error=tool_result[:100])
                 metrics.record_agent_call(tc["name"], _duration_ms, success=False)

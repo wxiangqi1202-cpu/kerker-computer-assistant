@@ -10,6 +10,7 @@
 
 _TOOL_RESULT_MAX_CHARS = 800
 _COMPRESS_INTERVAL = 5
+_AGENT_RESULT_MAX_CHARS = 4000
 _WEB_TOOL_NAMES = frozenset({"web_search", "web_summary", "web_search_and_read"})
 
 
