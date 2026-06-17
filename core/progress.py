@@ -72,6 +72,7 @@ class ProgressTracker:
         self._generation: int = 0
         self._footer: str = ""
         self._animation_speed: str = "normal"
+        self._plan_created = False
 
     @property
     def mode(self):
@@ -97,6 +98,17 @@ class ProgressTracker:
     def has_plan(self):
         with self._lock:
             return self._mode == ProgressMode.PLAN_MODE
+
+    @property
+    def plan_created(self):
+        """本轮是否已经创建过规划（防止 planner 重复调用）"""
+        with self._lock:
+            return self._plan_created
+
+    def allow_replan(self):
+        """允许重新规划（仅重置 plan_created 标志，不清除已有 plan 状态）"""
+        with self._lock:
+            self._plan_created = False
 
     @property
     def plan_steps(self):
@@ -150,6 +162,7 @@ class ProgressTracker:
                 ))
             self._visible = bool(self._steps)
             self._finished = False
+            self._plan_created = True
 
     def tool_start(self, tool_name: str):
         """
@@ -350,6 +363,7 @@ class ProgressTracker:
             self._visible = False
             self._footer = ""
             self._generation += 1
+            self._plan_created = False
 
     @property
     def generation(self):

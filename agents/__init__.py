@@ -19,7 +19,6 @@ from core.json_utils import extract_json_object
 
 _registry = {}
 _active_spinner = None
-_planner_used = False
 
 
 def set_spinner(spinner):
@@ -105,11 +104,10 @@ def _register_as_skill(agent):
         tracker.add_sub_activity(agent.name, text)
 
     async def _run_agent(task):
-        global _planner_used
         from core.progress import get_tracker
         tracker = get_tracker()
 
-        if agent.name == "planner" and _planner_used:
+        if agent.name == "planner" and tracker.plan_created:
             return "规划已完成，请根据现有规划继续执行。"
 
         if _active_spinner:
@@ -117,7 +115,6 @@ def _register_as_skill(agent):
 
         if agent.name == "planner":
             tracker.set_original_task(task)
-            _planner_used = True
         else:
             context_prompt = tracker.build_context_prompt(agent_name=agent.name)
             if context_prompt:
@@ -170,19 +167,16 @@ def _register_as_skill(agent):
 
 def clear_plan():
     """清除规划状态，每轮对话结束后调用"""
-    global _planner_used
-    _planner_used = False
     from core.progress import get_tracker
     get_tracker().reset()
 
 
 def reset_planner():
-    """重置 planner 使用标志，允许下次重新规划。
-    所有需要重置 _planner_used 的地方统一调用此函数，
-    而非直接修改 agents._planner_used。
+    """允许重新规划（仅重置 plan_created 标志）。
+    replan 场景使用：保留已有进度状态，但允许 planner 再次被调用。
     """
-    global _planner_used
-    _planner_used = False
+    from core.progress import get_tracker
+    get_tracker().allow_replan()
 
 
 def _auto_load():
