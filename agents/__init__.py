@@ -97,11 +97,14 @@ def _summarize_result(text, max_len=200):
 
 def _register_as_skill(agent):
     def _on_status(text):
-        if _active_spinner:
-            _active_spinner.update_sub(agent.name, [text])
         from core.progress import get_tracker
         tracker = get_tracker()
         tracker.add_sub_activity(agent.name, text)
+        if _active_spinner:
+            if tracker.has_plan:
+                _active_spinner.update_sub(agent.name, ["工作中..."])
+            else:
+                _active_spinner.update_sub(agent.name, [text])
 
     async def _run_agent(task):
         from core.progress import get_tracker
