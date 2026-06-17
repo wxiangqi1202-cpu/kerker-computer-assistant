@@ -276,6 +276,9 @@ def cmd_resume(args, ctx):
     if arg == "export":
         _do_export(ctx)
         return
+    if arg == "pdf":
+        _do_export_pdf(ctx)
+        return
     if arg.startswith("search "):
         _do_search_history(arg[7:].strip())
         return
@@ -297,6 +300,7 @@ def cmd_resume(args, ctx):
         {"label": "搜索历史", "hint": "按关键词查找"},
         {"label": "保存当前对话", "hint": ""},
         {"label": "导出 Markdown", "hint": ""},
+        {"label": "导出 PDF", "hint": "需要 weasyprint 或 pandoc"},
     ])
 
     idx = pick(items, title="对话管理")
@@ -316,6 +320,8 @@ def cmd_resume(args, ctx):
         _do_save(ctx)
     elif idx == offset + 4:
         _do_export(ctx)
+    elif idx == offset + 5:
+        _do_export_pdf(ctx)
 
 
 def _do_interrupt_resume(ctx):
@@ -474,6 +480,45 @@ def _do_save(ctx):
     _console.print(f"  [green]✓ 已保存: {filepath}[/green]")
 
 
+def _build_export_markdown(messages):
+    """从对话消息构建干净的 Markdown 文档内容。"""
+    lines = [
+        f"# KerKer 对话记录",
+        f"",
+        f"> 导出时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  ",
+        f"> 模型: {config.MODEL} · 角色: {config.CURRENT_ROLE}",
+        f"",
+        f"---",
+        f"",
+    ]
+    prev_role = None
+    for msg in messages:
+        role = msg["role"]
+        content = msg.get("content", "") or ""
+        if role == "system":
+            continue
+        if role == "tool":
+            continue
+        if role == "assistant" and msg.get("tool_calls") and not content:
+            continue
+        if role == "user":
+            if prev_role == "user":
+                lines.append("")
+            lines.append(f"### 你")
+            lines.append(f"")
+            lines.append(content)
+            lines.append(f"")
+        elif role == "assistant" and content:
+            lines.append(f"### KerKer")
+            lines.append(f"")
+            lines.append(content)
+            lines.append(f"")
+            lines.append(f"---")
+            lines.append(f"")
+        prev_role = role
+    return "\n".join(lines)
+
+
 def _do_export(ctx):
     history.ensure_dirs()
     try:
@@ -486,20 +531,145 @@ def _do_export(ctx):
     else:
         filename = name if name.endswith(".md") else name + ".md"
     filepath = os.path.join(config.HISTORY_DIR, filename)
-    lines = []
-    for msg in ctx["messages"]:
-        role = msg["role"]
-        content = msg.get("content", "") or ""
-        if role == "system":
-            continue
-        elif role == "user":
-            lines.append(f"**你** › {content}\n")
-        elif role == "assistant":
-            lines.append(f"**KerKer** ›\n\n{content}\n")
-        lines.append("---\n")
+    content = _build_export_markdown(ctx["messages"])
     with open(filepath, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+        f.write(content)
     _console.print(f"  [green]✓ 已导出: {filepath}[/green]")
+
+
+_PDF_HTML_TEMPLATE = """\
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  @page {{ size: A4; margin: 2cm; }}
+  body {{
+    font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+                 "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
+    font-size: 11pt; line-height: 1.7; color: #222;
+    max-width: 680px; margin: 0 auto;
+  }}
+  h1 {{ font-size: 18pt; border-bottom: 2px solid #333; padding-bottom: 6px; }}
+  h3 {{ font-size: 12pt; margin: 1.2em 0 0.3em; color: #555; }}
+  hr {{ border: none; border-top: 1px solid #ddd; margin: 1em 0; }}
+  blockquote {{
+    border-left: 3px solid #ccc; margin: 0; padding: 4px 12px; color: #666;
+    font-size: 9pt;
+  }}
+  pre {{
+    background: #f5f5f5; padding: 10px 14px; border-radius: 4px;
+    overflow-x: auto; font-size: 9.5pt; line-height: 1.5;
+  }}
+  code {{ background: #f0f0f0; padding: 1px 4px; border-radius: 3px; font-size: 9.5pt; }}
+  pre code {{ background: none; padding: 0; }}
+  table {{ border-collapse: collapse; width: 100%; margin: 0.8em 0; }}
+  th, td {{ border: 1px solid #ddd; padding: 6px 10px; text-align: left; }}
+  th {{ background: #f5f5f5; }}
+</style>
+</head>
+<body>
+{body}
+</body>
+</html>"""
+
+
+def _md_to_html(md_text):
+    """Markdown → HTML，优先用 markdown 库，fallback 用 <pre> 包裹。"""
+    try:
+        import markdown
+        return markdown.markdown(
+            md_text,
+            extensions=["fenced_code", "tables", "nl2br"],
+        )
+    except ImportError:
+        import re
+        html = md_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        html = re.sub(r"^### (.+)$", r"<h3>\1</h3>", html, flags=re.MULTILINE)
+        html = re.sub(r"^# (.+)$", r"<h1>\1</h1>", html, flags=re.MULTILINE)
+        html = re.sub(r"^---$", "<hr>", html, flags=re.MULTILINE)
+        html = re.sub(r"^> (.+)$", r"<blockquote>\1</blockquote>", html, flags=re.MULTILINE)
+        html = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", html)
+        html = re.sub(r"`(.+?)`", r"<code>\1</code>", html)
+        html = html.replace("\n\n", "</p><p>").replace("\n", "<br>")
+        return f"<p>{html}</p>"
+
+
+def _html_to_pdf(html, filepath):
+    """HTML → PDF，尝试 weasyprint → pandoc → 降级为 HTML 文件。
+    返回 (实际保存路径, 格式说明)。
+    """
+    try:
+        from weasyprint import HTML as WeasyprintHTML
+        WeasyprintHTML(string=html).write_pdf(filepath)
+        return filepath, "pdf"
+    except ImportError:
+        pass
+    except Exception as err:
+        _console.print(f"  [yellow]weasyprint 转换失败: {err}，尝试 pandoc...[/yellow]")
+
+    import subprocess
+    import tempfile
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".html", mode="w", encoding="utf-8", delete=False) as tmp:
+            tmp.write(html)
+            tmp_path = tmp.name
+        subprocess.run(
+            ["pandoc", tmp_path, "-o", filepath,
+             "--pdf-engine=xelatex",
+             "-V", "CJKmainfont=PingFang SC",
+             "-V", "geometry:margin=2cm"],
+            check=True, capture_output=True, timeout=30,
+        )
+        os.unlink(tmp_path)
+        return filepath, "pdf"
+    except FileNotFoundError:
+        pass
+    except subprocess.CalledProcessError:
+        try:
+            subprocess.run(
+                ["pandoc", tmp_path, "-o", filepath, "--pdf-engine=wkhtmltopdf"],
+                check=True, capture_output=True, timeout=30,
+            )
+            os.unlink(tmp_path)
+            return filepath, "pdf"
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    html_path = filepath.rsplit(".", 1)[0] + ".html"
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(html)
+    return html_path, "html"
+
+
+def _do_export_pdf(ctx):
+    """导出对话为 PDF（Markdown → HTML → PDF）"""
+    history.ensure_dirs()
+    try:
+        name = input("  文件名 (直接回车自动命名): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        _console.print("\n  [dim]已取消[/dim]")
+        return
+    if not name:
+        filename = datetime.now().strftime("%Y%m%d_%H%M%S") + ".pdf"
+    else:
+        filename = name if name.endswith(".pdf") else name + ".pdf"
+    filepath = os.path.join(config.HISTORY_DIR, filename)
+
+    _console.print("  [dim]生成中...[/dim]")
+    md_text = _build_export_markdown(ctx["messages"])
+    html_body = _md_to_html(md_text)
+    full_html = _PDF_HTML_TEMPLATE.format(body=html_body)
+
+    actual_path, fmt = _html_to_pdf(full_html, filepath)
+    if fmt == "pdf":
+        _console.print(f"  [green]✓ 已导出 PDF: {actual_path}[/green]")
+    else:
+        _console.print(f"  [yellow]未找到 PDF 工具 (weasyprint/pandoc)，已导出为 HTML[/yellow]")
+        _console.print(f"  [green]  {actual_path}[/green]")
+        _console.print(f"  [dim]安装 PDF 支持: pip install weasyprint 或 brew install pandoc[/dim]")
 
 
 @command("/clear", "清空当前对话")

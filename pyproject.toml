@@ -30,6 +30,7 @@ dependencies = [
 
 [project.optional-dependencies]
 precise = ["tiktoken>=0.5.0"]
+pdf = ["weasyprint>=60.0", "markdown>=3.5"]
 
 [project.scripts]
 kerker = "cli.loop:main"
