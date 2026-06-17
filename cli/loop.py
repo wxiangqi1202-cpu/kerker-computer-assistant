@@ -295,9 +295,19 @@ async def _async_main():
         try:
             spinner.update(tips=CONNECTING_TIPS)
             event_stream = send(api_client, messages)
-            reply, assistant_msg, max_rounds_hit, new_messages = await render(event_stream, spinner=spinner, taskboard=taskboard)
+            reply, assistant_msg, max_rounds_hit, new_messages, interrupted, route_decision = await render(event_stream, spinner=spinner, taskboard=taskboard)
 
-            if spinner.interrupted.is_set():
+            from core.route_learn import get_route_learner
+            learner = get_route_learner()
+            if route_decision:
+                learner.record_decision(
+                    text_len=0, complexity=0,
+                    action=route_decision.action, reason=route_decision.reason,
+                )
+
+            if interrupted:
+                learner.record_outcome(success=False, interrupted=True)
+                agents.reset_planner()
                 ctx["messages"] = messages
             elif max_rounds_hit:
                 _summary_parts = []
@@ -329,6 +339,21 @@ async def _async_main():
                     task = asyncio.create_task(_passive_extract(user_input, recent_ctx))
                     _background_tasks.add(task)
                     task.add_done_callback(_background_tasks.discard)
+
+            if not interrupted:
+                learner.record_outcome(
+                    success=True, interrupted=False,
+                    replanned=tracker.needs_replan if tracker.has_plan else False,
+                )
+                has_pending_plan = (
+                    tracker.has_plan and
+                    any(s.status.value == "pending" for s in tracker.plan_steps)
+                )
+                if has_pending_plan:
+                    tracker.pause_on_interrupt()
+                    agents.reset_planner()
+                else:
+                    agents.clear_plan()
 
         except asyncio.CancelledError:
             spinner.stop()

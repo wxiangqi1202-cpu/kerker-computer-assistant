@@ -8,6 +8,9 @@
 - tool_result: 工具调用结果
 - text: 流式文本
 - done: 完成
+
+业务副作用（route learning、planner 管理）由调用方负责，
+本模块仅返回渲染结果和状态，不直接操作 agents 或 route_learn。
 """
 
 import sys
@@ -41,6 +44,7 @@ def _tool_tip(tool_name):
 
 
 async def render(event_stream, spinner=None, taskboard=None):
+    """渲染事件流，返回 (reply, assistant_msg, max_rounds_hit, new_messages, interrupted)。"""
     if spinner is None:
         spinner = Spinner()
 
@@ -57,11 +61,12 @@ async def render(event_stream, spinner=None, taskboard=None):
     new_messages = []
     receiving_text = False
     max_rounds_hit = False
+    route_decision = None
 
     cancel_task = None
 
     async def _consume_stream():
-        nonlocal reply, assistant_msg, new_messages, receiving_text
+        nonlocal reply, assistant_msg, new_messages, receiving_text, route_decision
         async for event in event_stream:
             if spinner.interrupted.is_set():
                 break
@@ -69,15 +74,9 @@ async def render(event_stream, spinner=None, taskboard=None):
             etype = event["type"]
 
             if etype == "route":
-                decision = event.get("decision")
-                if decision:
-                    from core.route_learn import get_route_learner
-                    get_route_learner().record_decision(
-                        text_len=0, complexity=0,
-                        action=decision.action, reason=decision.reason,
-                    )
-                    if decision.action == "plan":
-                        spinner.update(tips=["正在规划任务..."])
+                route_decision = event.get("decision")
+                if route_decision and route_decision.action == "plan":
+                    spinner.update(tips=["正在规划任务..."])
 
             elif etype == "thinking":
                 from core.progress import get_tracker as _gt4
@@ -142,6 +141,7 @@ async def render(event_stream, spinner=None, taskboard=None):
                 else:
                     _out.write_flush("\n")
 
+    interrupted = False
     try:
         consume_task = asyncio.create_task(_consume_stream())
         cancel_task = asyncio.create_task(_watch_interrupt(spinner, consume_task))
@@ -150,45 +150,25 @@ async def render(event_stream, spinner=None, taskboard=None):
     finally:
         if cancel_task:
             cancel_task.cancel()
-        import agents
         from core.progress import get_tracker
-        from core.route_learn import get_route_learner
         tracker = get_tracker()
-        learner = get_route_learner()
         if spinner.interrupted.is_set():
-            learner.record_outcome(success=False, interrupted=True)
+            interrupted = True
             recovery.save_on_interrupt()
             if taskboard:
                 taskboard.clear()
             spinner.stop()
             tracker.pause_on_interrupt()
-            agents.reset_planner()
             has_partial = recovery.has_state()
             hint = " — /resume 可续接" if has_partial else ""
             _out.write_flush(f"\n  \033[2m⏹ 已中断 (ESC){hint}\033[0m\n\n")
         else:
-            learner.record_outcome(success=True, interrupted=False,
-                                   replanned=tracker.needs_replan if tracker.has_plan else False)
             recovery.clear()
+            if taskboard:
+                taskboard.clear()
+            spinner.stop()
 
-            has_pending_plan = (
-                tracker.has_plan and
-                any(s.status.value == "pending" for s in tracker.plan_steps)
-            )
-
-            if has_pending_plan:
-                if taskboard:
-                    taskboard.clear()
-                spinner.stop()
-                tracker.pause_on_interrupt()
-                agents.reset_planner()
-            else:
-                if taskboard:
-                    taskboard.clear()
-                spinner.stop()
-                agents.clear_plan()
-
-    return reply, assistant_msg, max_rounds_hit, new_messages
+    return reply, assistant_msg, max_rounds_hit, new_messages, interrupted, route_decision
 
 
 async def _watch_interrupt(spinner, target_task):
