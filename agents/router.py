@@ -14,6 +14,10 @@
 
 注意：所有路由（含 DIRECT）都保留完整工具列表，LLM 始终可以调用任何工具。
 DIRECT 仅跳过 AGENT_DIRECTIVE / EXPLORE_DIRECTIVE 行为指导文本。
+
+学习反馈：RouteLearner 记录每次路由决策及其结果（成功/中断/replan），
+  通过 complexity_threshold_adjustment 提供阈值调节信号，
+  可用于未来引入复杂度评分时动态调整 PLAN/DIRECT 的触发门槛。
 """
 
 import re

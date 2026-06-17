@@ -70,8 +70,14 @@ async def render(event_stream, spinner=None, taskboard=None):
 
             if etype == "route":
                 decision = event.get("decision")
-                if decision and decision.action == "plan":
-                    spinner.update(tips=["正在规划任务..."])
+                if decision:
+                    from core.route_learn import get_route_learner
+                    get_route_learner().record_decision(
+                        text_len=0, complexity=0,
+                        action=decision.action, reason=decision.reason,
+                    )
+                    if decision.action == "plan":
+                        spinner.update(tips=["正在规划任务..."])
 
             elif etype == "thinking":
                 from core.progress import get_tracker as _gt4
