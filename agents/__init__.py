@@ -13,7 +13,7 @@ import json
 import importlib
 import pkgutil
 
-import skills as skills_module
+from core import tool_registry
 from agents.base import SubAgent
 from core.json_utils import extract_json_object
 
@@ -148,7 +148,7 @@ def _register_as_skill(agent):
                 _active_spinner.remove_sub(agent.name)
         return result
 
-    skills_module.register(
+    tool_registry.register(
         name=f"agent_{agent.name}",
         description=f"[子智能体] {agent.description}",
         parameters={

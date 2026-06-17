@@ -5,7 +5,7 @@ SubAgent 基类 v2 —— 共享上下文注入 + 链式调用 + 重试 + 预算
 import asyncio
 from core import config
 from core.client import get_client_pool
-import skills as skills_module
+from core import tool_registry
 
 
 class SubAgent:
@@ -32,7 +32,7 @@ class SubAgent:
     def _get_tools(self):
         if self.allowed_skills is None:
             return []
-        all_specs = skills_module.get_all_specs()
+        all_specs = tool_registry.get_all_specs()
         allowed = set(self.allowed_skills)
         if self.can_call_agents:
             for spec in all_specs:
@@ -154,7 +154,7 @@ class SubAgent:
             for tc in parsed_calls:
                 if on_status:
                     on_status(f"🔧 {tc['name']}")
-                result = await skills_module.async_call(tc["name"], tc["args"])
+                result = await tool_registry.async_call(tc["name"], tc["args"])
                 if on_status:
                     first_line = (result or "").strip().split("\n")[0][:50]
                     if first_line and "执行出错" not in first_line:
