@@ -66,36 +66,6 @@ def is_web_tool(tool_name):
     return tool_name in _WEB_TOOL_NAMES
 
 
-def build_rounds_summary(messages_full, messages_backup):
-    """
-    轮次超限时，从已执行的 messages 中提取执行摘要。
-    注入到回滚后的上下文，让 LLM 知道之前做了什么。
-    """
-    new_messages = messages_full[len(messages_backup):]
-    if not new_messages:
-        return ""
-
-    lines = ["[执行摘要 - 上轮因轮次超限中断，以下为已完成的工作]"]
-    tool_count = 0
-    for msg in new_messages:
-        role = msg.get("role", "")
-        content = msg.get("content", "") or ""
-        if role == "tool" and content:
-            tool_count += 1
-            first_line = content.split("\n")[0][:80]
-            lines.append(f"  工具结果 {tool_count}: {first_line}")
-        elif role == "assistant" and msg.get("tool_calls"):
-            for tc in msg["tool_calls"]:
-                name = tc.get("function", {}).get("name", "")
-                if name:
-                    lines.append(f"  调用了: {name}")
-
-    if len(lines) <= 1:
-        return ""
-    lines.append("请根据以上进度继续完成任务。")
-    return "\n".join(lines[:20])
-
-
 # 工具友好名称映射
 TOOL_FRIENDLY_NAMES = {
     "distill_role": "提取角色特征",

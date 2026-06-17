@@ -96,8 +96,9 @@ class RouteLearner:
         try:
             with open(ROUTE_HISTORY_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False)
-        except Exception:
-            pass
+        except OSError as err:
+            import sys
+            print(f"[kerker] 路由历史保存失败: {err}", file=sys.stderr)
 
     def record_decision(self, text_len, complexity, action, reason):
         """记录一次路由决策"""

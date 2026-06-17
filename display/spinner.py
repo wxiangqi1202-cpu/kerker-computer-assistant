@@ -17,6 +17,8 @@ import queue
 import time
 import random
 
+from display import output as _out
+
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 FADE_LEVELS = [255, 252, 249, 246, 243, 240, 237, 245, 248, 251, 254, 255]
 
@@ -76,13 +78,13 @@ class Spinner:
         self._sub_lines = {}
         self._taskboard = None
         self._running = False
+        self._start_lock = threading.Lock()
         self._thread = None
         self._key_thread = None
         self._msg_queue = queue.Queue(maxsize=256)
-        self._render_lock = threading.Lock()
         self._start_time = None
         self._line_count = 0
-        self.interrupted = False
+        self.interrupted = threading.Event()
         self._old_settings = None
 
     def set_taskboard(self, taskboard):
@@ -91,16 +93,17 @@ class Spinner:
     def update(self, tips=None):
         if tips:
             self._msg_queue.put((self.MSG_UPDATE_MAIN, _TipLine(tips)))
-        if not self._running:
-            self._running = True
-            self.interrupted = False
-            self._start_time = time.time()
-            self._line_count = 0
-            self._enter_cbreak()
-            self._thread = threading.Thread(target=self._spin, daemon=True)
-            self._key_thread = threading.Thread(target=self._read_keys, daemon=True)
-            self._thread.start()
-            self._key_thread.start()
+        with self._start_lock:
+            if not self._running:
+                self._running = True
+                self.interrupted.clear()
+                self._start_time = time.time()
+                self._line_count = 0
+                self._enter_cbreak()
+                self._thread = threading.Thread(target=self._spin, daemon=True)
+                self._key_thread = threading.Thread(target=self._read_keys, daemon=True)
+                self._thread.start()
+                self._key_thread.start()
 
     def update_sub(self, name, tips):
         self._msg_queue.put((self.MSG_UPDATE_SUB, name, _TipLine(tips), time.time()))
@@ -141,7 +144,7 @@ class Spinner:
                             while select.select([sys.stdin], [], [], 0.02)[0]:
                                 os.read(fd, 1)
                         else:
-                            self.interrupted = True
+                            self.interrupted.set()
                             self._running = False
             except Exception:
                 break
@@ -150,8 +153,11 @@ class Spinner:
         spin_idx = 0
         while self._running:
             self._drain_queue()
-            with self._render_lock:
+            _out.acquire()
+            try:
                 self._render_frame(spin_idx)
+            finally:
+                _out.release()
             spin_idx += 1
             time.sleep(0.08)
 
@@ -179,7 +185,6 @@ class Spinner:
         subs = [(k, v) for k, (v, _) in self._sub_lines.items()]
 
         task_lines = self._taskboard.get_lines(tick=spin_idx) if self._taskboard else []
-        total_lines = 1 + len(subs) + len(task_lines)
 
         elapsed = time.time() - self._start_time
         time_str = f"{elapsed * 1000:.0f}ms" if elapsed < 1 else f"{elapsed:.1f}s"
@@ -201,7 +206,10 @@ class Spinner:
             buf.append(f"\r    \033[90m└\033[0m {sub_frame} \033[90m{sub_name}\033[0m {tip_str}\033[K")
 
         for tl in task_lines:
+            tl = tl.replace("\n", " ").replace("\r", "")
             buf.append(f"\r{tl}\033[K")
+
+        total_lines = len(buf)
 
         output = ""
         if self._line_count > 0:
@@ -214,8 +222,7 @@ class Spinner:
                 output += "\033[2K\n"
             output += f"\033[{stale}A"
 
-        sys.stdout.write(output)
-        sys.stdout.flush()
+        _out.write_flush(output)
         self._line_count = total_lines
 
     def stop(self, final_message=None):
@@ -228,7 +235,8 @@ class Spinner:
             self._key_thread = None
         self._exit_cbreak()
 
-        with self._render_lock:
+        _out.acquire()
+        try:
             if self._line_count > 0:
                 sys.stdout.write(f"\033[{self._line_count}A\r")
                 for _ in range(self._line_count):
@@ -240,8 +248,15 @@ class Spinner:
             else:
                 sys.stdout.write("\r\033[K")
             sys.stdout.flush()
+        finally:
+            _out.release()
 
         self._start_time = None
         self._main_line = None
         self._sub_lines.clear()
         self._line_count = 0
+        while not self._msg_queue.empty():
+            try:
+                self._msg_queue.get_nowait()
+            except queue.Empty:
+                break

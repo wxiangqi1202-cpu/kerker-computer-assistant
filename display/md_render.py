@@ -13,7 +13,7 @@ from rich.syntax import Syntax
 
 from display.theme import get_theme, RESET
 
-_console = Console(force_terminal=True)
+_console = Console()
 
 # ── Markdown 块级解析 ─────────────────────────────
 
@@ -137,7 +137,7 @@ def _is_table_start(lines, idx):
 
 def _visible_width(text):
     """计算去除 ANSI 转义后的可见字符宽度（考虑中文全角）"""
-    plain = re.sub(r"\033\[[0-9;]*m", "", text)
+    plain = re.sub(r"\033\[[0-9;]*[A-Za-z]|\033\][^\a]*\a", "", text)
     width = 0
     for ch in plain:
         if unicodedata.east_asian_width(ch) in ("W", "F"):
@@ -312,7 +312,8 @@ def _render_table(block, indent):
         col_widths[i] = max(col_widths[i], _visible_width(h))
     for row in data_rows:
         for i in range(min(len(row), col_count)):
-            col_widths[i] = max(col_widths[i], _visible_width(row[i]))
+            rendered_cell = _render_inline(row[i])
+            col_widths[i] = max(col_widths[i], _visible_width(rendered_cell))
     col_widths = [w + pad * 2 for w in col_widths]
 
     def _align_cell(text, width, align):
@@ -416,6 +417,6 @@ def render_markdown(text, width=None):
 
 
 def print_markdown(text, width=None):
-    output = render_markdown(text, width)
-    sys.stdout.write(f"\n{output}\n")
-    sys.stdout.flush()
+    from display import output as _out
+    rendered = render_markdown(text, width)
+    _out.write_flush(f"\n{rendered}\n")

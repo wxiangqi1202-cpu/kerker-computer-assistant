@@ -49,7 +49,12 @@ class Planner(SubAgent):
     max_turns = 1
 
     async def _execute(self, task, on_status=None):
-        self.system_prompt = _PLANNER_PROMPT_TEMPLATE.format(
+        prompt = _PLANNER_PROMPT_TEMPLATE.format(
             agent_list=_build_agent_list()
         )
-        return await super()._execute(task, on_status=on_status)
+        orig = self.system_prompt
+        self.system_prompt = prompt
+        try:
+            return await super()._execute(task, on_status=on_status)
+        finally:
+            self.system_prompt = orig

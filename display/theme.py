@@ -5,9 +5,11 @@
 
 import os
 import json
+import threading
 
 _KERKER_HOME = os.path.expanduser("~/.kerker")
 _THEME_FILE = os.path.join(_KERKER_HOME, "theme.json")
+_theme_lock = threading.Lock()
 
 ESC = "\033["
 RESET = f"{ESC}0m"
@@ -156,20 +158,22 @@ _current_theme = None
 
 def get_theme():
     global _current_theme
-    if _current_theme is not None:
+    with _theme_lock:
+        if _current_theme is not None:
+            return _current_theme
+        _current_theme = dict(BUILTIN_THEMES["minimal"])
+        _load_user_overrides()
         return _current_theme
-    _current_theme = dict(BUILTIN_THEMES["minimal"])
-    _load_user_overrides()
-    return _current_theme
 
 
 def set_theme(name):
     global _current_theme
-    if name in BUILTIN_THEMES:
-        _current_theme = dict(BUILTIN_THEMES[name])
-        _save_theme_choice(name)
-        return True
-    return False
+    with _theme_lock:
+        if name in BUILTIN_THEMES:
+            _current_theme = dict(BUILTIN_THEMES[name])
+            _save_theme_choice(name)
+            return True
+        return False
 
 
 def get_theme_names():
@@ -204,5 +208,8 @@ def _save_theme_choice(name):
         except Exception:
             pass
     data["theme"] = name
-    with open(_THEME_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    try:
+        with open(_THEME_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass

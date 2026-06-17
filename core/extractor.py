@@ -141,31 +141,34 @@ async def extract_and_save(user_message: str, context_messages: list = None) -> 
             base_url=config.get_model_base_url("deepseek-v4-flash"),
         )
 
-        context_str = "无"
-        if context_messages:
-            ctx_lines = []
-            for msg in context_messages[-4:]:
-                role = msg.get("role", "")
-                content = (msg.get("content") or "")[:200]
-                if role in ("user", "assistant") and content:
-                    label = "用户" if role == "user" else "助手"
-                    ctx_lines.append(f"{label}: {content}")
-            if ctx_lines:
-                context_str = "\n".join(ctx_lines)
+        try:
+            context_str = "无"
+            if context_messages:
+                ctx_lines = []
+                for msg in context_messages[-4:]:
+                    role = msg.get("role", "")
+                    content = (msg.get("content") or "")[:200]
+                    if role in ("user", "assistant") and content:
+                        label = "用户" if role == "user" else "助手"
+                        ctx_lines.append(f"{label}: {content}")
+                if ctx_lines:
+                    context_str = "\n".join(ctx_lines)
 
-        resp = await client.chat.completions.create(
-            model="deepseek-v4-flash",
-            messages=[
-                {"role": "system", "content": "信息提取助手，只输出JSON数组。"},
-                {"role": "user", "content": _EXTRACT_PROMPT.format(
-                    message=user_message[:600],
-                    context=context_str,
-                )},
-            ],
-            stream=False,
-            max_tokens=400,
-            temperature=0.1,
-        )
+            resp = await client.chat.completions.create(
+                model="deepseek-v4-flash",
+                messages=[
+                    {"role": "system", "content": "信息提取助手，只输出JSON数组。"},
+                    {"role": "user", "content": _EXTRACT_PROMPT.format(
+                        message=user_message[:600],
+                        context=context_str,
+                    )},
+                ],
+                stream=False,
+                max_tokens=400,
+                temperature=0.1,
+            )
+        finally:
+            await client.close()
 
         raw = resp.choices[0].message.content or "[]"
         json_str = _extract_json_array(raw)
@@ -211,7 +214,8 @@ async def extract_and_save(user_message: str, context_messages: list = None) -> 
                 if e.get("scope") != "session"
             )
             if non_session >= _CONSOLIDATE_THRESHOLD:
-                _aio.create_task(_consolidate_background(sem, cat))
+                task = _aio.create_task(_consolidate_background(sem, cat))
+                task.add_done_callback(lambda t: None)
 
         return saved
 

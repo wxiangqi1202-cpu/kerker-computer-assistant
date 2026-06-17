@@ -118,7 +118,27 @@ KerKer 内置一套 **Planner-Executor** 多智能体框架。对于复杂任务
             └─ agent_ascend_debug   算子编译/运行时诊断
 ```
 
-**任务进度面板**实时显示每个步骤的执行状态（`○ pending` → `◎ running` → `✓ done`），执行完成后有汇聚动画。
+**任务进度面板**实时显示每个步骤的执行状态，包含子活动详情、步骤摘要和计时：
+
+```
+  任务规划 (1/3)
+  › 搜索新疆攻略                    12.3s
+    ├ 🔧 搜索
+    ├   → 找到6条结果
+  ○ 整理攻略文档
+  ○ 发送到飞书
+```
+
+步骤完成后显示摘要，全部完成后播放收束动画（可通过 `/config animation off` 关闭）：
+
+```
+  任务规划 (3/3)
+  ✓ 搜索新疆攻略                    2.1s
+    → 独库公路、喀纳斯、赛里木湖
+  ✓ 整理攻略文档                    3.2s
+  ✓ 发送到飞书                      0.9s
+  ─── 组织回复中... ───
+```
 
 **示例**：
 
@@ -265,6 +285,7 @@ H  ─── deepseek-v4-flash · 默认 · 14 tools ───  （安静模式�
 | `ALLOW_SHELL` | `true` | 允许 LLM 执行 Shell 命令 |
 | `PASSIVE_MEMORY` | `true` | 被动记忆（无感知从对话中提取用户习惯/偏好） |
 | `MEMORY_CONFIRM` | `false` | 记忆确认模式（被动提取先进待确认队列） |
+| `ANIMATION_SPEED` | `normal` | 任务完成动画速度 `fast/normal/off` |
 | `STATUSBAR_STYLE` | `a` | 状态栏样式 `a`~`h` |
 | `CURRENT_ROLE` | `默认` | 当前角色 |
 

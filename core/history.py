@@ -50,8 +50,13 @@ def load(filename):
     filepath = os.path.join(config.HISTORY_DIR, filename)
     if not os.path.isfile(filepath):
         return None
-    with open(filepath, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as err:
+        import sys
+        print(f"[kerker] 加载对话历史失败: {err}", file=sys.stderr)
+        return None
 
 
 def clean_for_api(messages):

@@ -68,12 +68,12 @@ class SubAgent:
                 last_error = f"子智能体 [{self.name}] 执行超时 ({self.timeout_seconds}s)"
                 if on_status:
                     on_status(last_error)
+                if attempt >= self.max_retries:
+                    raise asyncio.TimeoutError(last_error)
             except Exception as err:
                 last_error = str(err)
                 if attempt >= self.max_retries:
                     raise
-
-        return last_error or "子智能体执行失败"
 
     async def _execute(self, task, on_status=None):
         """实际执行逻辑（单次尝试），支持流式进度回调"""
@@ -105,7 +105,6 @@ class SubAgent:
             reasoning = ""
             tool_calls_data = {}
             preview_len = 0
-            got_content = False
 
             async for chunk in response:
                 if not chunk.choices:
@@ -118,10 +117,9 @@ class SubAgent:
 
                 if delta.content:
                     content += delta.content
-                    got_content = True
                     if on_status and len(content) - preview_len >= 20:
                         snippet = content[-40:].replace("\n", " ").strip()
-                        on_status(f"[{self.name}] ...{snippet}")
+                        on_status(f"...{snippet}")
                         preview_len = len(content)
 
                 tc_list = getattr(delta, "tool_calls", None)
@@ -180,6 +178,11 @@ class SubAgent:
                     {"role": "user", "content": "请根据以上工具调用结果，给出最终总结回复。"}
                 ], stream=False,
             )
-            return summary_resp.choices[0].message.content or "子智能体达到最大轮次限制"
+            if summary_resp.choices:
+                return summary_resp.choices[0].message.content or "子智能体达到最大轮次限制"
+            return "子智能体达到最大轮次限制"
         except Exception:
-            return messages[-1].get("content", "子智能体达到最大轮次限制")
+            for msg in reversed(messages):
+                if msg.get("role") == "assistant" and msg.get("content"):
+                    return msg["content"]
+            return "子智能体达到最大轮次限制"

@@ -47,7 +47,7 @@ async def api_call_with_retry(client, kwargs):
     raise last_error
 
 
-def build_kwargs(messages, route_action=None, user_input=None):
+def build_kwargs(messages, user_input=None):
     """构建 API 请求参数"""
     extra_body = {}
     if config.ENABLE_THINKING:
@@ -69,7 +69,6 @@ def build_kwargs(messages, route_action=None, user_input=None):
     tool_specs = skills.get_filtered_tool_specs(
         role_name=config.CURRENT_ROLE,
         user_input=user_input,
-        route_action=route_action,
     )
     if tool_specs:
         kwargs["tools"] = tool_specs

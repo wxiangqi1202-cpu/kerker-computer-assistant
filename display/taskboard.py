@@ -13,6 +13,18 @@
 
 import threading
 import time
+import unicodedata
+
+
+def _cjk_truncate(text, max_width):
+    """按显示宽度截断文本（CJK字符占2列）"""
+    width = 0
+    for i, ch in enumerate(text):
+        char_width = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        if width + char_width > max_width:
+            return text[:i]
+        width += char_width
+    return text
 
 _BREATH_COLORS = [
     238, 240, 242, 244, 247, 250, 252, 255,
@@ -45,6 +57,7 @@ class TaskBoard:
         self._tracker = None
         self._finish_anim_start = 0.0
         self._finishing = False
+        self._anim_done = False
         self._final_count = 0
         self._final_snapshot = []
         self._cleared = False
@@ -71,6 +84,7 @@ class TaskBoard:
         with self._lock:
             self._finish_anim_start = 0.0
             self._finishing = False
+            self._anim_done = False
             self._final_count = 0
             self._final_snapshot = []
             self._cleared = True
@@ -86,6 +100,9 @@ class TaskBoard:
                     self._cleared = False
                 else:
                     return []
+
+            if self._anim_done:
+                return []
 
             if self._finishing:
                 return self._render_finish_anim(tick)
@@ -119,10 +136,10 @@ class TaskBoard:
         lines.append(header)
 
         for step in snapshot:
-            name = step["name"]
+            name = step["name"].replace("\n", " ")
             status = step["status"]
             elapsed = step["elapsed"]
-            summary = step["summary"]
+            summary = (step["summary"] or "").replace("\n", " ")
             sub_activities = step["sub_activities"]
             elapsed_str = _fmt_elapsed(elapsed)
 
@@ -131,16 +148,17 @@ class TaskBoard:
                 time_part = f"  \033[90m{elapsed_str}\033[0m" if elapsed_str else ""
                 lines.append(f"    \033[38;5;{c}m›\033[0m \033[97m{name}\033[0m{time_part}")
                 for act in sub_activities[-2:]:
+                    act = act.replace("\n", " ")
                     lines.append(f"      \033[90m├ {act}\033[0m")
             elif status == "done":
                 time_part = f"  \033[90m{elapsed_str}\033[0m" if elapsed_str else ""
                 lines.append(f"    \033[32m✓\033[0m \033[90m{name}\033[0m{time_part}")
                 if summary:
-                    lines.append(f"      \033[90m→ {summary[:60]}\033[0m")
+                    lines.append(f"      \033[90m→ {_cjk_truncate(summary, 60)}\033[0m")
             elif status == "error":
                 lines.append(f"    \033[31m✗\033[0m \033[90m{name}\033[0m")
                 if summary:
-                    lines.append(f"      \033[31m→ {summary[:60]}\033[0m")
+                    lines.append(f"      \033[31m→ {_cjk_truncate(summary, 60)}\033[0m")
             else:
                 lines.append(f"    \033[90m○\033[0m \033[90m{name}\033[0m")
 
@@ -198,5 +216,6 @@ class TaskBoard:
             return [f"    \033[38;5;{c}m✓ {count} 项已完成\033[0m"]
 
         self._finishing = False
+        self._anim_done = True
         self._final_snapshot = []
         return []

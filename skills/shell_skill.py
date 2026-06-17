@@ -9,6 +9,7 @@ DANGEROUS_PATTERNS = [
     r"\brm\s+(-[a-zA-Z]*\s+)*(/|~|\.\.|--no-preserve-root)",
     r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f",
     r"\brm\s+-[a-zA-Z]*f[a-zA-Z]*r",
+    r"\brm\s+-[a-zA-Z]*[rf][a-zA-Z]*/",
     r"\bmkfs\b",
     r"\bdd\s+.*of\s*=\s*/dev/",
     r">\s*/dev/sd",
@@ -54,7 +55,8 @@ def run_shell(command):
     if _is_dangerous(command):
         if not _is_interactive():
             return f"安全限制: 检测到危险命令，非交互环境下已拒绝执行: {command}"
-        print(f"\n  ⚠ 危险命令检测: {command}")
+        import sys as _sys
+        print(f"\n  ⚠ 危险命令检测: {command}", file=_sys.stderr)
         try:
             confirm = input("  确认执行? (y/N): ").strip().lower()
         except (EOFError, KeyboardInterrupt):

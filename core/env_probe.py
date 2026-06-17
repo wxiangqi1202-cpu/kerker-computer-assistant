@@ -34,7 +34,7 @@ def _probe_tool(name, cmd):
     """检测单个工具是否可用，返回版本信息或 None"""
     try:
         result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=5
+            cmd.split(), capture_output=True, text=True, timeout=5
         )
         if result.returncode == 0:
             version = result.stdout.strip().split("\n")[0][:80]
@@ -76,7 +76,7 @@ def probe_environment(force=False):
     """
     if not force and os.path.isfile(_ENV_CACHE):
         try:
-            with open(_ENV_CACHE, "r") as f:
+            with open(_ENV_CACHE, "r", encoding="utf-8") as f:
                 cached = json.load(f)
             age = os.path.getmtime(_ENV_CACHE)
             import time
@@ -97,7 +97,7 @@ def probe_environment(force=False):
 
     try:
         os.makedirs(_KERKER_HOME, exist_ok=True)
-        with open(_ENV_CACHE, "w") as f:
+        with open(_ENV_CACHE, "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
     except Exception:
         pass

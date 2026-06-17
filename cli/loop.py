@@ -10,7 +10,6 @@ from rich.console import Console
 from core import config
 from core.client import create_client
 from core.turn import send
-from core.context import build_rounds_summary
 from core.history import ensure_dirs
 from core import history
 from core.tokens import count_tokens, count_message_tokens
@@ -20,8 +19,6 @@ from cli.completer import create_session
 from cli.registry import dispatch
 from cli.commands import build_system_messages
 from cli.welcome import show_welcome
-import cli.commands  # noqa: F401  触发 @command 注册
-import agents  # noqa: F401  触发子智能体加载
 
 _console = Console()
 
@@ -36,7 +33,6 @@ except Exception:
 
 def _print_status_bar(messages=None):
     """输入前打印一行淡色状态分隔线，样式由 config.STATUSBAR_STYLE 决定。"""
-    import skills
     from display.statusbar import render_statusbar
     render_statusbar(
         config.STATUSBAR_STYLE,
@@ -177,6 +173,11 @@ def _autosave(messages):
 async def _async_main():
     ensure_dirs()
 
+    import cli.commands  # noqa: F401  触发 @command 注册
+    skills.init()
+    import agents
+    agents.init()
+
     from cli.setup import needs_setup, run_setup
     if needs_setup():
         run_setup()
@@ -225,6 +226,7 @@ async def _async_main():
         "should_exit": False,
     }
 
+    _background_tasks = set()
     _first_prompt = True
     _pending_send = False  # /resume 断点续接时跳过提示直接发送
 
@@ -243,6 +245,8 @@ async def _async_main():
                 )
                 user_input = (await session.prompt_async(prompt_text)).strip()
         except (EOFError, KeyboardInterrupt):
+            for task in _background_tasks:
+                task.cancel()
             _autosave(messages)
             config.save_user_config()
             _console.print("\n  [dim]再见！[/dim]")
@@ -264,6 +268,8 @@ async def _async_main():
             if user_input.startswith("/"):
                 if dispatch(user_input, ctx):
                     if ctx["should_exit"]:
+                        for task in _background_tasks:
+                            task.cancel()
                         _autosave(messages)
                         config.save_user_config()
                         _console.print("  [dim]再见！[/dim]")
@@ -297,45 +303,50 @@ async def _async_main():
             _pending_send = False
 
         try:
-            messages_backup = list(messages)
             spinner.update(tips=CONNECTING_TIPS)
             event_stream = send(api_client, messages)
-            reply, assistant_msg, max_rounds_hit = await render(event_stream, spinner=spinner, taskboard=taskboard)
+            reply, assistant_msg, max_rounds_hit, new_messages = await render(event_stream, spinner=spinner, taskboard=taskboard)
 
-            if spinner.interrupted:
-                messages.clear()
-                messages.extend(messages_backup)
+            if spinner.interrupted.is_set():
                 ctx["messages"] = messages
             elif max_rounds_hit:
-                _summary = build_rounds_summary(messages, messages_backup)
-                messages.clear()
-                messages.extend(messages_backup)
-                if _summary:
-                    messages.append({"role": "system", "content": _summary})
-                _console.print("  [dim]轮次超限，已回滚并保留执行摘要。输入 /resume 或继续对话。[/dim]")
+                _summary_parts = []
+                for msg in new_messages:
+                    role = msg.get("role", "")
+                    content = msg.get("content", "") or ""
+                    if role == "assistant" and msg.get("tool_calls"):
+                        for tc in msg["tool_calls"]:
+                            name = tc.get("function", {}).get("name", "")
+                            if name:
+                                _summary_parts.append(f"  调用了: {name}")
+                    elif role == "tool" and content:
+                        first_line = content.split("\n")[0][:80]
+                        _summary_parts.append(f"  工具结果: {first_line}")
+                if _summary_parts:
+                    summary_text = "[执行摘要 - 上轮因轮次超限中断]\n" + "\n".join(_summary_parts[:20])
+                    messages.append({"role": "system", "content": summary_text})
+                _console.print("  [dim]轮次超限，已保留执行摘要。输入 /resume 或继续对话。[/dim]")
                 ctx["messages"] = messages
             else:
+                messages.extend(new_messages)
                 if assistant_msg:
                     messages.append(assistant_msg)
                 elif reply:
                     messages.append({"role": "assistant", "content": reply})
                 ctx["messages"] = messages
-                # 后台静默提取：不阻塞主流程，用户无感知
                 if reply and not user_input.startswith("/"):
                     recent_ctx = [m for m in messages if m.get("role") in ("user", "assistant")][-4:]
-                    asyncio.create_task(_passive_extract(user_input, recent_ctx))
+                    task = asyncio.create_task(_passive_extract(user_input, recent_ctx))
+                    _background_tasks.add(task)
+                    task.add_done_callback(_background_tasks.discard)
 
         except asyncio.CancelledError:
             spinner.stop()
             taskboard.clear()
-            messages.clear()
-            messages.extend(messages_backup)
         except Exception as error:
             spinner.stop()
             taskboard.clear()
             agents.clear_plan()
-            messages.clear()
-            messages.extend(messages_backup)
             err_str = str(error)
             if "api_key" in err_str.lower() or "auth" in err_str.lower() or "401" in err_str:
                 _console.print("\n  [red]API Key 无效或已过期，请运行 /config 重新配置[/red]")

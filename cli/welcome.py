@@ -140,48 +140,50 @@ def _welcome_hologram(ctx):
 
     sys.stdout.write("\n\033[?25l")
 
-    for _ in range(total_height):
-        sys.stdout.write("\n")
+    try:
+        for _ in range(total_height):
+            sys.stdout.write("\n")
 
-    for frame in range(total_frames):
-        progress = frame / (total_frames - 1)
-        scan_y = int(progress * (line_count - 1))
+        for frame in range(total_frames):
+            progress = frame / (total_frames - 1)
+            scan_y = int(progress * (line_count - 1))
+
+            sys.stdout.write(f"\033[{total_height}A")
+
+            for row in range(line_count):
+                original = _LOGO_LINES[row]
+                row_progress = max(0.0, min(1.0, (progress * 1.6) - (row / line_count) * 0.6))
+
+                line = "  "
+                for ch in original:
+                    if ch == " ":
+                        line += " "
+                        continue
+
+                    if random.random() < row_progress:
+                        if row == scan_y:
+                            sc = scan_colors[frame % len(scan_colors)]
+                            line += f"\033[1;38;5;{sc}m{ch}\033[0m"
+                        else:
+                            bright = int(232 + row_progress * 23)
+                            line += f"\033[38;5;{bright}m{ch}\033[0m"
+                    else:
+                        nc = random.choice(noise_chars)
+                        line += f"\033[38;5;{random.choice([17, 18, 19, 23, 24])}m{nc}\033[0m"
+
+                sys.stdout.write(f"{line}\033[K\n")
+
+            sub_alpha = max(0, int((progress - 0.5) * 2 * 23))
+            sub_color = 232 + sub_alpha
+            sys.stdout.write(f"  \033[38;5;{sub_color}mComputational Agent Framework  v{ctx['version']}\033[0m\033[K\n")
+
+            sys.stdout.flush()
+            time.sleep(0.09)
 
         sys.stdout.write(f"\033[{total_height}A")
-
-        for row in range(line_count):
-            original = _LOGO_LINES[row]
-            row_progress = max(0.0, min(1.0, (progress * 1.6) - (row / line_count) * 0.6))
-
-            line = "  "
-            for ch in original:
-                if ch == " ":
-                    line += " "
-                    continue
-
-                if random.random() < row_progress:
-                    if row == scan_y:
-                        sc = scan_colors[frame % len(scan_colors)]
-                        line += f"\033[1;38;5;{sc}m{ch}\033[0m"
-                    else:
-                        bright = int(232 + row_progress * 23)
-                        line += f"\033[38;5;{bright}m{ch}\033[0m"
-                else:
-                    nc = random.choice(noise_chars)
-                    line += f"\033[38;5;{random.choice([17, 18, 19, 23, 24])}m{nc}\033[0m"
-
-            sys.stdout.write(f"{line}\033[K\n")
-
-        sub_alpha = max(0, int((progress - 0.5) * 2 * 23))
-        sub_color = 232 + sub_alpha
-        sys.stdout.write(f"  \033[38;5;{sub_color}mComputational Agent Framework  v{ctx['version']}\033[0m\033[K\n")
-
-        sys.stdout.flush()
-        time.sleep(0.09)
-
-    sys.stdout.write(f"\033[{total_height}A")
-    _print_final_logo(ctx)
-    sys.stdout.write("\033[?25h")
+        _print_final_logo(ctx)
+    finally:
+        sys.stdout.write("\033[?25h")
 
 
 # ── typewriter ─────────────────────────
@@ -192,27 +194,29 @@ def _welcome_typewriter(ctx):
 
     sys.stdout.write("\n\033[?25l")
 
-    for row in range(len(_LOGO_LINES)):
-        original = _LOGO_LINES[row]
-        color = _LOGO_COLORS[row]
-        sys.stdout.write(f"  \033[{color}m")
-        pos = 0
-        while pos < len(original):
-            chunk_end = min(pos + chars_per_frame, len(original))
-            sys.stdout.write(original[pos:chunk_end])
+    try:
+        for row in range(len(_LOGO_LINES)):
+            original = _LOGO_LINES[row]
+            color = _LOGO_COLORS[row]
+            sys.stdout.write(f"  \033[{color}m")
+            pos = 0
+            while pos < len(original):
+                chunk_end = min(pos + chars_per_frame, len(original))
+                sys.stdout.write(original[pos:chunk_end])
+                sys.stdout.flush()
+                time.sleep(0.012 + random.random() * 0.018)
+                pos = chunk_end
+            sys.stdout.write("\033[0m\n")
+
+        sys.stdout.write("\n")
+
+        subtitle = f"  Computational Agent Framework  v{ctx['version']}"
+        for ch in subtitle:
+            sys.stdout.write(f"\033[90m{ch}\033[0m")
             sys.stdout.flush()
-            time.sleep(0.012 + random.random() * 0.018)
-            pos = chunk_end
-        sys.stdout.write("\033[0m\n")
+            time.sleep(0.018)
+        sys.stdout.write("\n\n")
+    finally:
+        sys.stdout.write("\033[?25h")
 
-    sys.stdout.write("\n")
-
-    subtitle = f"  Computational Agent Framework  v{ctx['version']}"
-    for ch in subtitle:
-        sys.stdout.write(f"\033[90m{ch}\033[0m")
-        sys.stdout.flush()
-        time.sleep(0.018)
-    sys.stdout.write("\n\n")
-
-    sys.stdout.write("\033[?25h")
     sys.stdout.write(_INFO_TEMPLATE.format(**ctx))

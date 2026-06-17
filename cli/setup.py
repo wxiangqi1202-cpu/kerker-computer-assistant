@@ -96,9 +96,7 @@ def run_setup():
         {"label": "深度模式", "hint": "pro + 深度思考，复杂推理"},
     ]
     mode_idx = pick(mode_items, current_idx=0)
-    if mode_idx == 0:
-        config.apply_preset("fast")
-    elif mode_idx == 1:
+    if mode_idx == 1:
         config.apply_preset("deep")
     else:
         config.apply_preset("fast")

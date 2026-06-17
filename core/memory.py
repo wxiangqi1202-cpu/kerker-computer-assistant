@@ -23,7 +23,9 @@ import os
 import json
 import math
 import re
+import sys
 import tempfile
+import threading
 import time
 import uuid
 from collections import Counter
@@ -43,6 +45,21 @@ PENDING_FILE  = os.path.join(MEMORY_DIR, "pending.json")
 
 def _ensure_dir():
     os.makedirs(MEMORY_DIR, exist_ok=True)
+
+
+def _load_json_safe(filepath: str, label: str) -> list:
+    """安全加载 JSON 数组文件，损坏或出错时重置为空列表并打印警告"""
+    if not os.path.isfile(filepath):
+        return []
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except json.JSONDecodeError as err:
+        print(f"[kerker] {label}文件损坏，已重置: {err}", file=sys.stderr)
+        return []
+    except Exception as err:
+        print(f"[kerker] 加载{label}出错，已重置: {err}", file=sys.stderr)
+        return []
 
 
 def _atomic_write_json(filepath: str, data):
@@ -298,21 +315,10 @@ class SemanticMemory:
         self._load()
 
     def _load(self):
-        if os.path.isfile(SEMANTIC_FILE):
-            try:
-                with open(SEMANTIC_FILE, "r", encoding="utf-8") as f:
-                    self._entries = json.load(f)
-                for e in self._entries:                     # 向前兼容
-                    e.setdefault("category",      _auto_category(e.get("content", "")))
-                    e.setdefault("last_accessed", e.get("updated"))
-            except json.JSONDecodeError as err:
-                import sys as _sys
-                print(f"[kerker] 语义记忆文件损坏，已重置: {err}", file=_sys.stderr)
-                self._entries = []
-            except Exception as err:
-                import sys as _sys
-                print(f"[kerker] 加载语义记忆出错，已重置: {err}", file=_sys.stderr)
-                self._entries = []
+        self._entries = _load_json_safe(SEMANTIC_FILE, "语义记忆")
+        for e in self._entries:
+            e.setdefault("category",      _auto_category(e.get("content", "")))
+            e.setdefault("last_accessed", e.get("updated"))
         self._rebuild_index()
         self._purge_expired_sessions()
 
@@ -522,6 +528,7 @@ class SemanticMemory:
             results.append(entry)
 
         if results and update_access:
+            self._access_dirty = True
             self._save()
         return results
 
@@ -576,18 +583,21 @@ class SemanticMemory:
                     api_key=api_key,
                     base_url=config.get_model_base_url("deepseek-v4-flash"),
                 )
-                content_list = "\n".join(f"- {e['content']}" for e in targets[:15])
-                prompt = _CONSOLIDATION_PROMPT.format(
-                    count=len(targets[:15]), category=category, content_list=content_list
-                )
-                resp = await client.chat.completions.create(
-                    model="deepseek-v4-flash",
-                    messages=[
-                        {"role": "system", "content": "记忆合并助手，只输出JSON数组。"},
-                        {"role": "user",   "content": prompt},
-                    ],
-                    stream=False, max_tokens=500, temperature=0.1,
-                )
+                try:
+                    content_list = "\n".join(f"- {e['content']}" for e in targets[:15])
+                    prompt = _CONSOLIDATION_PROMPT.format(
+                        count=len(targets[:15]), category=category, content_list=content_list
+                    )
+                    resp = await client.chat.completions.create(
+                        model="deepseek-v4-flash",
+                        messages=[
+                            {"role": "system", "content": "记忆合并助手，只输出JSON数组。"},
+                            {"role": "user",   "content": prompt},
+                        ],
+                        stream=False, max_tokens=500, temperature=0.1,
+                    )
+                finally:
+                    await client.close()
                 raw      = resp.choices[0].message.content or "[]"
                 json_str = _extract_json_array(raw)
                 if not json_str:
@@ -688,18 +698,7 @@ class EpisodicMemory:
         self._load()
 
     def _load(self):
-        if os.path.isfile(EPISODES_FILE):
-            try:
-                with open(EPISODES_FILE, "r", encoding="utf-8") as f:
-                    self._episodes = json.load(f)
-            except json.JSONDecodeError as err:
-                import sys as _sys
-                print(f"[kerker] 情景记忆文件损坏，已重置: {err}", file=_sys.stderr)
-                self._episodes = []
-            except Exception as err:
-                import sys as _sys
-                print(f"[kerker] 加载情景记忆出错，已重置: {err}", file=_sys.stderr)
-                self._episodes = []
+        self._episodes = _load_json_safe(EPISODES_FILE, "情景记忆")
         self._rebuild_index()
 
     def _save(self):
@@ -803,6 +802,7 @@ class EpisodicMemory:
 
 # ── 全局单例 ─────────────────────────────────────
 
+_singleton_lock = threading.Lock()
 _semantic = None
 _episodic = None
 _pending  = None
@@ -811,14 +811,18 @@ _pending  = None
 def get_semantic() -> SemanticMemory:
     global _semantic
     if _semantic is None:
-        _semantic = SemanticMemory()
+        with _singleton_lock:
+            if _semantic is None:
+                _semantic = SemanticMemory()
     return _semantic
 
 
 def get_episodic() -> EpisodicMemory:
     global _episodic
     if _episodic is None:
-        _episodic = EpisodicMemory()
+        with _singleton_lock:
+            if _episodic is None:
+                _episodic = EpisodicMemory()
     return _episodic
 
 
@@ -932,5 +936,7 @@ class PendingMemory:
 def get_pending() -> PendingMemory:
     global _pending
     if _pending is None:
-        _pending = PendingMemory()
+        with _singleton_lock:
+            if _pending is None:
+                _pending = PendingMemory()
     return _pending

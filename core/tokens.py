@@ -7,23 +7,27 @@ Token 计算模块 —— 精确 token 计数 + 动态上下文窗口管理
 3. 缓存 encoding 实例避免重复初始化
 """
 
-import functools
+import threading
 
 _encoding = None
 _tiktoken_available = False
 _tiktoken_init_attempted = False
+_tiktoken_lock = threading.Lock()
 
 
 def _init_tiktoken():
     """延迟初始化 tiktoken（仅在首次调用时加载，失败后不再重试）"""
     global _encoding, _tiktoken_available, _tiktoken_init_attempted
-    _tiktoken_init_attempted = True
-    try:
-        import tiktoken
-        _encoding = tiktoken.get_encoding("cl100k_base")
-        _tiktoken_available = True
-    except (ImportError, Exception):
-        _tiktoken_available = False
+    with _tiktoken_lock:
+        if _tiktoken_init_attempted:
+            return
+        _tiktoken_init_attempted = True
+        try:
+            import tiktoken
+            _encoding = tiktoken.get_encoding("cl100k_base")
+            _tiktoken_available = True
+        except (ImportError, Exception):
+            _tiktoken_available = False
 
 
 def count_tokens(text: str) -> int:

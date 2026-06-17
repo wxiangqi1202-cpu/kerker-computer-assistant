@@ -158,7 +158,8 @@ class TestFileSkillSecurity(unittest.TestCase):
 
     def test_env_file_blocked(self):
         from skills.file_skill import _is_sensitive
-        self.assertTrue(_is_sensitive("/some/project/.env"))
+        home = os.path.expanduser("~")
+        self.assertTrue(_is_sensitive(os.path.join(home, "project/.env")))
 
 
 class TestShellSkillSecurity(unittest.TestCase):

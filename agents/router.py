@@ -67,7 +67,7 @@ def _is_step_pending(step):
     return status == "pending"
 
 
-def route(user_input, available_agents=None, context=None):
+def route(user_input, context=None):
     """
     最小化路由：只处理确定性硬规则，其余交给 LLM。
 

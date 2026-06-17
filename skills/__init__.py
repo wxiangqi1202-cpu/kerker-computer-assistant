@@ -100,15 +100,17 @@ def register(name, description, parameters, func, agent_only=False):
 
 def get_tool_specs(include_agent_only=False):
     """返回技能描述列表（带缓存）。主模型调用时默认排除 agent_only 技能。"""
-    global _specs_cache
-    if not include_agent_only:
-        if _specs_cache is None:
-            _specs_cache = [
-                item["spec"] for item in _registry.values()
-                if not item.get("agent_only")
-            ]
-        return _specs_cache
-    return [item["spec"] for item in _registry.values()]
+    global _specs_cache, _specs_cache_all
+    if include_agent_only:
+        if _specs_cache_all is None:
+            _specs_cache_all = [item["spec"] for item in _registry.values()]
+        return _specs_cache_all
+    if _specs_cache is None:
+        _specs_cache = [
+            item["spec"] for item in _registry.values()
+            if not item.get("agent_only")
+        ]
+    return _specs_cache
 
 
 def get_all_specs():
@@ -151,12 +153,11 @@ _CONTEXT_TOOL_TRIGGERS = {
 }
 
 
-def get_filtered_tool_specs(role_name=None, user_input=None, route_action=None):
+def get_filtered_tool_specs(role_name=None, user_input=None):
     """
     按角色和上下文过滤工具列表。
 
     策略：
-    - 所有路由（含 DIRECT）都保留工具能力，LLM 始终可以调用工具
     - 按角色获取基础工具集
     - 按用户输入关键词动态追加相关工具
     """
@@ -250,8 +251,6 @@ async def async_call(name, arguments_json):
             else:
                 return f"技能 {name} 重试 {_TOOL_MAX_RETRIES} 次后仍失败: {err}"
 
-    return f"技能 {name} 执行出错: {last_error}"
-
 
 def _auto_load():
     package = importlib.import_module("skills")
@@ -290,7 +289,8 @@ def _load_user_skills():
         filepath = os.path.join(user_dir, filename)
         safe, reason = _check_skill_file_safe(filepath)
         if not safe:
-            print(f"⚠ 跳过用户技能 {filename}: {reason}")
+            import sys as _sys
+            print(f"⚠ 跳过用户技能 {filename}: {reason}", file=_sys.stderr)
             continue
         module_name = f"user_skill_{filename[:-3]}"
         try:
@@ -298,8 +298,18 @@ def _load_user_skills():
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
         except Exception as e:
-            print(f"⚠ 加载用户技能 {filename} 失败: {e}")
+            import sys as _sys
+            print(f"⚠ 加载用户技能 {filename} 失败: {e}", file=_sys.stderr)
 
 
-_auto_load()
-_load_user_skills()
+_initialized = False
+
+
+def init():
+    """显式初始化：加载内置技能 + 用户技能。由 cli/loop.py 启动时调用。"""
+    global _initialized
+    if _initialized:
+        return
+    _initialized = True
+    _auto_load()
+    _load_user_skills()

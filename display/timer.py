@@ -28,7 +28,10 @@ class Timer:
         self.stop()
 
     def format(self):
-        """返回格式化的耗时字符串"""
-        if self.elapsed < 1:
-            return f"{self.elapsed * 1000:.0f}ms"
-        return f"{self.elapsed:.1f}s"
+        """返回格式化的耗时字符串（支持未 stop 时的实时读取）"""
+        elapsed = self.elapsed
+        if elapsed == 0.0 and self._start is not None:
+            elapsed = time.time() - self._start
+        if elapsed < 1:
+            return f"{elapsed * 1000:.0f}ms"
+        return f"{elapsed:.1f}s"

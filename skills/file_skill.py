@@ -34,7 +34,8 @@ def _is_sensitive(path):
     for sp in _SENSITIVE_PATHS:
         if path == sp or path.startswith(sp + os.sep):
             return True
-    if os.path.basename(path) in _SENSITIVE_NAMES:
+    home = os.path.expanduser("~")
+    if os.path.basename(path) in _SENSITIVE_NAMES and path.startswith(home + os.sep):
         return True
     return False
 

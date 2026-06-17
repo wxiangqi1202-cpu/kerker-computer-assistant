@@ -102,7 +102,8 @@ class ProgressTracker:
     def plan_steps(self):
         with self._lock:
             if self._mode == ProgressMode.PLAN_MODE:
-                return list(self._steps)
+                from copy import deepcopy
+                return deepcopy(self._steps)
             return []
 
     @property
@@ -139,7 +140,7 @@ class ProgressTracker:
             self._steps = []
             seen = set()
             for s in steps:
-                name = s.get("step", "").strip()
+                name = " ".join(s.get("step", "").split())
                 if not name or name in seen:
                     continue
                 seen.add(name)
@@ -211,6 +212,7 @@ class ProgressTracker:
 
     def agent_error(self, agent_name: str, error: str = ""):
         """子智能体失败。标记步骤并记录错误次数。"""
+        error = error.replace("\n", " ").replace("\r", "")
         with self._lock:
             if self._mode == ProgressMode.PLAN_MODE:
                 for step in self._steps:
@@ -413,13 +415,24 @@ class ProgressTracker:
 
     def add_sub_activity(self, agent_name: str, activity: str):
         """为当前 running 步骤添加子活动（工具调用等）"""
+        activity = activity.replace("\n", " ").replace("\r", "")
         with self._lock:
             if self._mode != ProgressMode.PLAN_MODE:
                 return
             for step in self._steps:
-                if step.status == StepStatus.RUNNING and (
-                    step.agent == agent_name or step.agent == "" or not agent_name
-                ):
+                if step.status == StepStatus.RUNNING:
+                    if agent_name and step.agent == agent_name:
+                        step.sub_activities.append(activity)
+                        if len(step.sub_activities) > 5:
+                            step.sub_activities = step.sub_activities[-5:]
+                        return
+                    elif not agent_name and step.agent == "":
+                        step.sub_activities.append(activity)
+                        if len(step.sub_activities) > 5:
+                            step.sub_activities = step.sub_activities[-5:]
+                        return
+            for step in self._steps:
+                if step.status == StepStatus.RUNNING:
                     step.sub_activities.append(activity)
                     if len(step.sub_activities) > 5:
                         step.sub_activities = step.sub_activities[-5:]
@@ -427,6 +440,7 @@ class ProgressTracker:
 
     def set_step_summary(self, agent_name: str, summary: str):
         """设置最近完成步骤的摘要（用于面板显示）"""
+        summary = summary.replace("\n", " ").replace("\r", "")
         with self._lock:
             if self._mode != ProgressMode.PLAN_MODE:
                 return
@@ -443,17 +457,19 @@ class ProgressTracker:
         """
         隐式步骤完成检测：当 agent 绑定步骤在 running 但本轮未调该 agent，
         且本轮有工具执行，则增加 rounds_running 计数。
-        超过 1 轮（即 agent 已被跳过），清除 agent 绑定使其可被 complete_unbound_step 完成。
+        超过 2 轮（即 agent 连续被跳过 3 次），清除 agent 绑定使其可被 complete_unbound_step 完成。
         """
         with self._lock:
             if self._mode != ProgressMode.PLAN_MODE:
                 return
+            if not tool_names_this_round:
+                return
             for step in self._steps:
                 if step.status == StepStatus.RUNNING and step.agent:
                     agent_tool = f"agent_{step.agent}"
-                    if agent_tool not in tool_names_this_round and tool_names_this_round:
+                    if agent_tool not in tool_names_this_round:
                         step.rounds_running += 1
-                        if step.rounds_running >= 2:
+                        if step.rounds_running >= 3:
                             step.agent = ""
 
     def set_animation_speed(self, speed: str):

@@ -32,7 +32,7 @@ def _try_auto_route(messages):
     PASS_THROUGH 不注入任何路由指令，完全信任 LLM 自主判断。
     """
     from agents.router import route, RouteDecision
-    from agents import get_all_agents, clear_plan
+    from agents import clear_plan
     from core.progress import get_tracker
 
     user_msgs = [m for m in messages if m.get("role") == "user"]
@@ -40,9 +40,8 @@ def _try_auto_route(messages):
         return None, None
 
     last_user = user_msgs[-1].get("content", "")
-    available = set(get_all_agents().keys())
     tracker = get_tracker()
-    decision = route(last_user, available, context=tracker)
+    decision = route(last_user, context=tracker)
 
     if decision.clear_plan:
         clear_plan()
@@ -198,11 +197,15 @@ async def send(client, messages):
     """
     单轮执行循环：从用户消息到完整回复。
 
+    设计：在 messages 的副本上操作，不修改调用方的原始列表。
+    通过 done 事件的 new_messages 字段返回本轮新增的会话消息，
+    由调用方决定是否 apply。中断/出错时原始 messages 不受影响。
+
     流程：
-    1. 清理旧路由消息 → 路由判定 → 注入路由指令
+    1. 清理旧路由消息 → 复制 → 路由判定 → 注入路由指令
     2. while 循环：同步 prompt → 构建参数 → API 调用 → 解析响应
     3. 有工具调用：分发执行 → 记录结果 → 注入提示 → 继续循环
-    4. 无工具调用：结束
+    4. 无工具调用：收集 delta → 结束
     """
     from core.progress import get_tracker
     from core.metrics import get_metrics
@@ -213,15 +216,18 @@ async def send(client, messages):
 
     clean_route_messages(messages)
 
+    working = list(messages)
+    baseline = len([m for m in working if m["role"] != "system"])
+
     _route_action = None
     if config.AUTO_ROUTE:
-        decision, route_msgs = _try_auto_route(messages)
+        decision, route_msgs = _try_auto_route(working)
         if decision:
             _route_action = decision.action
             yield {"type": "route", "decision": decision}
         if route_msgs:
             for msg in route_msgs:
-                messages.append(msg)
+                working.append(msg)
 
     _round = 0
     _first_token_recorded = False
@@ -230,75 +236,62 @@ async def send(client, messages):
         if _round > _MAX_ROUNDS:
             tracker.finish_all()
             metrics.end_turn(error="max_rounds_exceeded")
+            non_sys = [m for m in working if m["role"] != "system"]
             yield {
                 "type": "done",
                 "content": "达到最大工具调用轮次限制，已停止。",
                 "assistant_msg": {"role": "assistant", "content": "达到最大工具调用轮次限制，已停止。"},
                 "usage": None,
+                "new_messages": non_sys[baseline:],
                 "_max_rounds_hit": True,
             }
             break
 
         tracker.ensure_step_active()
         if _round == 1:
-            sync_system_messages(messages, route_action=_route_action)
+            sync_system_messages(working, route_action=_route_action)
         if should_compress(_round):
-            compress_tool_results(messages)
+            compress_tool_results(working)
 
         _last_user_input = None
         if _round == 1:
-            user_msgs = [m for m in messages if m.get("role") == "user"]
+            user_msgs = [m for m in working if m.get("role") == "user"]
             if user_msgs:
                 _last_user_input = user_msgs[-1].get("content", "")
 
-        kwargs = build_kwargs(messages,
-                              route_action=_route_action if _round == 1 else "pass_through",
+        kwargs = build_kwargs(working,
                               user_input=_last_user_input)
         response = await api_call_with_retry(client, kwargs)
 
-        if config.STREAM:
-            result = yield_result = None
-            _buffered_done = None
-            async for event in handle_stream(response):
-                if isinstance(event, dict) and event.get("_result"):
-                    yield_result = event["_result"]
+        handler = handle_stream(response) if config.STREAM else handle_sync(response)
+        result = yield_result = None
+        _buffered_done = None
+        async for event in handler:
+            if isinstance(event, dict) and event.get("_result"):
+                yield_result = event["_result"]
+            else:
+                if not _first_token_recorded and isinstance(event, dict) and event.get("type") in ("text", "thinking"):
+                    metrics.record_first_token()
+                    _first_token_recorded = True
+                if isinstance(event, dict) and event.get("type") == "done":
+                    if event.get("usage"):
+                        metrics.record_usage(event["usage"])
+                    _buffered_done = event
                 else:
-                    if not _first_token_recorded and isinstance(event, dict) and event.get("type") in ("text", "thinking"):
-                        metrics.record_first_token()
-                        _first_token_recorded = True
-                    if isinstance(event, dict) and event.get("type") == "done":
-                        if event.get("usage"):
-                            metrics.record_usage(event["usage"])
-                        _buffered_done = event
-                    else:
-                        yield event
-            result = yield_result
-        else:
-            result = None
-            _buffered_done = None
-            async for event in handle_sync(response):
-                if isinstance(event, dict) and event.get("_result"):
-                    result = event["_result"]
-                else:
-                    if not _first_token_recorded and isinstance(event, dict) and event.get("type") in ("text", "thinking"):
-                        metrics.record_first_token()
-                        _first_token_recorded = True
-                    if isinstance(event, dict) and event.get("type") == "done":
-                        if event.get("usage"):
-                            metrics.record_usage(event["usage"])
-                        _buffered_done = event
-                    else:
-                        yield event
+                    yield event
+        result = yield_result
 
         if not result or not result["tool_calls"]:
             tracker.finish_all()
             metrics.end_turn()
             if _buffered_done:
+                non_sys = [m for m in working if m["role"] != "system"]
+                _buffered_done["new_messages"] = non_sys[baseline:]
                 yield _buffered_done
             break
 
         metrics.record_round()
-        messages.append(result["assistant_msg"])
+        working.append(result["assistant_msg"])
 
         tool_calls = result["tool_calls"]
         agent_calls = [tc for tc in tool_calls if tc["name"].startswith("agent_")]
@@ -306,14 +299,14 @@ async def send(client, messages):
 
         for tc in agent_calls:
             yield {"type": "tool_exec", "name": tc["name"], "args": tc["args"]}
-        agent_results = await _dispatch_agent_calls(agent_calls, messages, tracker, metrics)
+        agent_results = await _dispatch_agent_calls(agent_calls, working, tracker, metrics)
         for tc, tool_result in agent_results:
             yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
 
         for tc in other_calls:
             yield {"type": "tool_exec", "name": tc["name"], "args": tc["args"]}
-        tool_results = await _dispatch_tool_calls(other_calls, messages, tracker, metrics)
+        tool_results = await _dispatch_tool_calls(other_calls, working, tracker, metrics)
         for tc, tool_result in tool_results:
             yield {"type": "tool_result", "name": tc["name"], "result": tool_result}
 
-        _post_round_inject(messages, tracker, agent_calls, other_calls)
+        _post_round_inject(working, tracker, agent_calls, other_calls)

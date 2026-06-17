@@ -218,8 +218,11 @@ class Config:
         if user_roles:
             data["USER_ROLES"] = user_roles
         data["ALL_ROLES"] = list(self.ROLES.keys())
-        with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        try:
+            with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except OSError as err:
+            print(f"[kerker] 保存配置失败: {err}", file=sys.stderr)
 
 
 config = Config()

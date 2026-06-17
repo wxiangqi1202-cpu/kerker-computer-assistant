@@ -570,7 +570,7 @@ def cmd_memory(args, ctx):
             import asyncio as _aio
             loop = _aio.get_running_loop()
             _console.print("  [dim]合并任务已在后台启动，稍后自动完成…[/dim]")
-            _aio.ensure_future(_do_compress())
+            _aio.create_task(_do_compress())
         except RuntimeError:
             # 没有运行中的事件循环（测试/命令行环境），直接 run
             import asyncio as _aio
@@ -786,8 +786,14 @@ def cmd_config(args, ctx):
                 attr, type_fn, _ = editable[key]
                 try:
                     parsed = value.lower() in ("true", "1", "yes", "on") if type_fn is bool else type_fn(value)
+                    if key == "animation" and parsed not in ("fast", "normal", "off"):
+                        _console.print(f"  [red]无效值: {parsed}  可选: fast / normal / off[/red]")
+                        return
                     setattr(config, attr, parsed)
                     config.save_user_config()
+                    if key == "animation":
+                        from core.progress import get_tracker
+                        get_tracker().set_animation_speed(parsed)
                     _console.print(f"  [green]✓ {key} = {parsed}[/green]")
                 except Exception as err:
                     _console.print(f"  [red]值无效: {err}[/red]")

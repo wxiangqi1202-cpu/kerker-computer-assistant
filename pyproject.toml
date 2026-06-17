@@ -32,10 +32,13 @@ dependencies = [
 precise = ["tiktoken>=0.5.0"]
 
 [project.scripts]
-kerker = "main:main"
+kerker = "cli.loop:main"
 
 [project.urls]
 Homepage = "https://github.com/wxiangqi1202-cpu/kerker-computer-assistant"
 
 [tool.setuptools.packages.find]
 include = ["core*", "cli*", "display*", "skills*", "agents*"]
+
+[tool.setuptools]
+py-modules = ["main"]

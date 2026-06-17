@@ -17,6 +17,7 @@ from rich.console import Console
 from display.spinner import Spinner, THINKING_TIPS, GENERATING_TIPS
 from display.timer import Timer
 from display.md_render import print_markdown
+from display import output as _out
 
 _console = Console()
 
@@ -53,15 +54,16 @@ async def render(event_stream, spinner=None, taskboard=None):
 
     reply = ""
     assistant_msg = None
+    new_messages = []
     receiving_text = False
     max_rounds_hit = False
 
     cancel_task = None
 
     async def _consume_stream():
-        nonlocal reply, assistant_msg, receiving_text
+        nonlocal reply, assistant_msg, new_messages, receiving_text
         async for event in event_stream:
-            if spinner.interrupted:
+            if spinner.interrupted.is_set():
                 break
 
             etype = event["type"]
@@ -72,14 +74,20 @@ async def render(event_stream, spinner=None, taskboard=None):
                     spinner.update(tips=["正在规划任务..."])
 
             elif etype == "thinking":
-                spinner.update(tips=THINKING_TIPS)
+                from core.progress import get_tracker as _gt4
+                if not _gt4().has_plan:
+                    spinner.update(tips=THINKING_TIPS)
 
             elif etype == "tool":
-                spinner.update(tips=_tool_tip(event.get("name", "")))
+                from core.progress import get_tracker as _gt3
+                if not _gt3().has_plan:
+                    spinner.update(tips=_tool_tip(event.get("name", "")))
                 recovery.accumulate_tool_call({"name": event.get("name", "")})
 
             elif etype == "tool_exec":
-                spinner.update(tips=_tool_tip(event.get("name", "")))
+                from core.progress import get_tracker as _gt2
+                if not _gt2().has_plan:
+                    spinner.update(tips=_tool_tip(event.get("name", "")))
 
             elif etype == "tool_result":
                 pass
@@ -90,7 +98,7 @@ async def render(event_stream, spinner=None, taskboard=None):
                     spinner.update(tips=GENERATING_TIPS)
                     from core.progress import get_tracker as _gt
                     _trk = _gt()
-                    if _trk.has_plan and _trk.done_count == _trk.total_steps:
+                    if _trk.has_plan and _trk.total_steps > 0 and _trk.done_count >= _trk.total_steps:
                         _trk.set_footer("组织回复中...")
                 recovery.accumulate_text(event.get("content", ""))
 
@@ -98,6 +106,7 @@ async def render(event_stream, spinner=None, taskboard=None):
                 timer.stop()
                 reply = event.get("content") or reply
                 assistant_msg = event.get("assistant_msg")
+                new_messages = event.get("new_messages") or []
                 usage = event.get("usage")
                 stats = _format_stats(usage, timer)
                 if event.get("_max_rounds_hit"):
@@ -109,14 +118,14 @@ async def render(event_stream, spinner=None, taskboard=None):
                     tracker = get_tracker()
                     tracker.clear_footer()
                     if tracker.is_finished and tracker.is_visible and tracker.animation_speed != "off":
-                        wait_start = asyncio.get_event_loop().time()
-                        while asyncio.get_event_loop().time() - wait_start < 2.0:
+                        wait_start = asyncio.get_running_loop().time()
+                        while asyncio.get_running_loop().time() - wait_start < 2.0:
                             if taskboard.is_finishing:
                                 break
                             await asyncio.sleep(0.05)
                         while taskboard.is_finishing:
                             await asyncio.sleep(0.06)
-                            if asyncio.get_event_loop().time() - wait_start > 3.0:
+                            if asyncio.get_running_loop().time() - wait_start > 3.0:
                                 break
 
                 spinner.stop(final_message=stats)
@@ -125,12 +134,11 @@ async def render(event_stream, spinner=None, taskboard=None):
                 if reply:
                     print_markdown(reply)
                 else:
-                    sys.stdout.write("\n")
-                    sys.stdout.flush()
+                    _out.write_flush("\n")
 
     try:
-        consume_task = asyncio.ensure_future(_consume_stream())
-        cancel_task = asyncio.ensure_future(_watch_interrupt(spinner, consume_task))
+        consume_task = asyncio.create_task(_consume_stream())
+        cancel_task = asyncio.create_task(_watch_interrupt(spinner, consume_task))
         await consume_task
 
     finally:
@@ -141,19 +149,17 @@ async def render(event_stream, spinner=None, taskboard=None):
         from core.route_learn import get_route_learner
         tracker = get_tracker()
         learner = get_route_learner()
-        if spinner.interrupted:
+        if spinner.interrupted.is_set():
             learner.record_outcome(success=False, interrupted=True)
             recovery.save_on_interrupt()
             if taskboard:
                 taskboard.clear()
             spinner.stop()
             tracker.pause_on_interrupt()
-            import agents as _agents_mod
-            _agents_mod._planner_used = False
+            agents._planner_used = False
             has_partial = recovery.has_state()
             hint = " — /resume 可续接" if has_partial else ""
-            sys.stdout.write(f"\n  \033[2m⏹ 已中断 (ESC){hint}\033[0m\n\n")
-            sys.stdout.flush()
+            _out.write_flush(f"\n  \033[2m⏹ 已中断 (ESC){hint}\033[0m\n\n")
         else:
             learner.record_outcome(success=True, interrupted=False,
                                    replanned=tracker.needs_replan if tracker.has_plan else False)
@@ -169,22 +175,21 @@ async def render(event_stream, spinner=None, taskboard=None):
                     taskboard.clear()
                 spinner.stop()
                 tracker.pause_on_interrupt()
-                import agents as _agents_mod
-                _agents_mod._planner_used = False
+                agents._planner_used = False
             else:
                 if taskboard:
                     taskboard.clear()
                 spinner.stop()
                 agents.clear_plan()
 
-    return reply, assistant_msg, max_rounds_hit
+    return reply, assistant_msg, max_rounds_hit, new_messages
 
 
 async def _watch_interrupt(spinner, target_task):
     try:
         while True:
             await asyncio.sleep(0.1)
-            if spinner.interrupted:
+            if spinner.interrupted.is_set():
                 target_task.cancel()
                 break
     except asyncio.CancelledError:

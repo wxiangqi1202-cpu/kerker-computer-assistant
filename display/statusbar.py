@@ -178,5 +178,5 @@ def render_statusbar(style, model, role, tool_count, messages=None):
             token_part = f" · {_c('90')}{rendered}{_c('90')}"
 
     bar = f"  {_c('90')}─── {model} · {role} · {tool_count} tools{token_part} ───{_R}"
-    sys.stdout.write(f"{bar}\n")
-    sys.stdout.flush()
+    from display import output as _out
+    _out.write_flush(f"{bar}\n")

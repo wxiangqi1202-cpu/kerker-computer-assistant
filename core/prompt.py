@@ -110,10 +110,13 @@ def _inject_relevant_memory(messages):
         return
 
     from core.memory import get_semantic
-    try:
-        relevant = get_semantic().search(last_q, limit=5, update_access=False)
-    except TypeError:
-        relevant = get_semantic().search(last_q, limit=5)
+    sem = get_semantic()
+    import inspect
+    _search_sig = inspect.signature(sem.search)
+    if "update_access" in _search_sig.parameters:
+        relevant = sem.search(last_q, limit=5, update_access=False)
+    else:
+        relevant = sem.search(last_q, limit=5)
 
     if not relevant:
         return

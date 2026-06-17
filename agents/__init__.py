@@ -142,7 +142,7 @@ def _register_as_skill(agent):
             return "规划已完成，请根据现有规划继续执行。"
 
         if _active_spinner:
-            _active_spinner.update_sub(agent.name, [f"{agent.name} 工作中..."])
+            _active_spinner.update_sub(agent.name, ["工作中..."])
 
         if agent.name == "planner":
             tracker.set_original_task(task)
@@ -159,6 +159,8 @@ def _register_as_skill(agent):
                 steps = _parse_planner_result(result)
                 if steps:
                     tracker.set_plan(steps)
+                    if _active_spinner:
+                        _active_spinner.update(tips=["执行任务中..."])
                     step_preview = "\n".join(
                         f"  {i+1}. {s['step']}" + (f" → {s['agent']}" if s.get('agent') else "")
                         for i, s in enumerate(steps)
@@ -226,4 +228,13 @@ def _auto_load():
         importlib.import_module(f"agents.{module_name}")
 
 
-_auto_load()
+_initialized = False
+
+
+def init():
+    """显式初始化：加载所有子智能体模块。由 cli/loop.py 启动时调用，必须在 skills.init() 之后。"""
+    global _initialized
+    if _initialized:
+        return
+    _initialized = True
+    _auto_load()
