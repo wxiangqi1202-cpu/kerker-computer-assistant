@@ -371,7 +371,7 @@ class ProgressTracker:
             return [(s.name, s.status.value) for s in self._steps]
 
     def get_rich_snapshot(self) -> list[dict]:
-        """获取包含子活动、摘要、计时的完整快照"""
+        """获取包含子活动、摘要、计时、绝对时间戳的完整快照"""
         with self._lock:
             result = []
             for s in self._steps:
@@ -381,6 +381,8 @@ class ProgressTracker:
                     "agent": s.agent,
                     "summary": s.summary,
                     "elapsed": s.elapsed,
+                    "started_at": s.started_at,
+                    "finished_at": s.finished_at,
                     "sub_activities": list(s.sub_activities[-3:]),
                 })
             return result

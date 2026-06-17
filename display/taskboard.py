@@ -46,10 +46,18 @@ def _fmt_elapsed(seconds):
     return f"{seconds:.1f}s"
 
 
+_TRANSITION_DURATION = 0.5
+_FADE_IN_DURATION = 0.3
+
+
 class TaskBoard:
     """
-    任务面板渲染器 v2。
-    由 ProgressTracker 驱动，增强显示子活动、摘要和计时。
+    任务面板渲染器 v3。
+    由 ProgressTracker 驱动，增强显示：
+    - 状态过渡动画（running→done 颜色渐退）
+    - 步骤渐入（新 running 步骤淡入）
+    - 已完成步骤折叠（焦点聚于当前执行步骤）
+    - 子活动流式聚焦（只展示最新一条）
     """
 
     def __init__(self):
@@ -127,34 +135,70 @@ class TaskBoard:
         return self._render_rich_steps(snapshot, tick)
 
     def _render_rich_steps(self, snapshot, tick):
-        """渲染增强步骤列表：圆形符号家族 + 精细色值"""
+        """渲染步骤列表：过渡动画 + 折叠 + 流式子活动"""
         lines = []
+        now = time.time()
         total = len(snapshot)
         done_count = sum(1 for s in snapshot if s["status"] in ("done", "error"))
 
         header = f"    \033[90m任务规划 ({done_count}/{total})\033[0m"
         lines.append(header)
 
-        for step in snapshot:
+        done_steps = [s for s in snapshot if s["status"] == "done"]
+        last_done_idx = -1
+        if done_steps:
+            for i, s in enumerate(snapshot):
+                if s is done_steps[-1]:
+                    last_done_idx = i
+
+        for idx, step in enumerate(snapshot):
             name = step["name"].replace("\n", " ")
             status = step["status"]
             elapsed = step["elapsed"]
             summary = (step["summary"] or "").replace("\n", " ")
             sub_activities = step["sub_activities"]
             elapsed_str = _fmt_elapsed(elapsed)
+            finished_at = step.get("finished_at", 0)
+            started_at = step.get("started_at", 0)
 
             if status == "running":
-                c = _BREATH_COLORS[tick % len(_BREATH_COLORS)]
+                fade_in = min((now - started_at) / _FADE_IN_DURATION, 1.0) if started_at > 0 else 1.0
+                if fade_in < 1.0:
+                    c = int(238 + fade_in * (255 - 238))
+                    name_color = f"38;5;{c}"
+                else:
+                    c = _BREATH_COLORS[tick % len(_BREATH_COLORS)]
+                    name_color = "1;97"
+
                 time_part = f"  \033[38;5;242m{elapsed_str}\033[0m" if elapsed_str else ""
-                lines.append(f"    \033[38;5;{c}m◉\033[0m \033[1;97m{name}\033[0m{time_part}")
-                for act in sub_activities[-2:]:
-                    act = act.replace("\n", " ")
+                lines.append(f"    \033[38;5;{c}m◉\033[0m \033[{name_color}m{name}\033[0m{time_part}")
+
+                if sub_activities:
+                    act = sub_activities[-1].replace("\n", " ")
                     lines.append(f"      \033[38;5;242m↳ {_cjk_truncate(act, 50)}\033[0m")
+
             elif status == "done":
+                since_done = now - finished_at if finished_at > 0 else 999
+
+                if since_done < _TRANSITION_DURATION:
+                    t = since_done / _TRANSITION_DURATION
+                    icon_c = int(255 - t * (255 - 71))
+                    name_c = int(255 - t * (255 - 245))
+                    icon_color = f"38;5;{icon_c}"
+                    name_color = f"38;5;{name_c}"
+                else:
+                    icon_color = "38;5;71"
+                    name_color = "38;5;245"
+
+                is_latest_done = (idx == last_done_idx)
+                show_summary = is_latest_done or len(done_steps) <= 2
+
                 time_part = f"  \033[38;5;242m{elapsed_str}\033[0m" if elapsed_str else ""
-                lines.append(f"    \033[38;5;71m✓\033[0m \033[38;5;245m{name}\033[0m{time_part}")
-                if summary:
+                lines.append(f"    \033[{icon_color}m✓\033[0m \033[{name_color}m{name}\033[0m{time_part}")
+
+                if summary and show_summary:
                     lines.append(f"      \033[38;5;240m· {_cjk_truncate(summary, 60)}\033[0m")
+
             elif status == "error":
                 lines.append(f"    \033[38;5;203m✗\033[0m \033[38;5;245m{name}\033[0m")
                 if summary:
