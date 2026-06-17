@@ -366,3 +366,83 @@ KerKer 在多个层面内置了安全防护：
 ## License
 
 MIT © 王祥祺
+
+
+## 🏗️ 项目架构
+
+```
+kerker/
+├── main.py                 入口
+├── core/                   核心层（无 UI 依赖）
+│   ├── config.py           全局配置单例 + 持久化
+│   ├── client.py           ClientPool 统一客户端管理 + API 调用
+│   ├── tool_registry.py    工具注册表（agents/skills 的统一注册中心）
+│   ├── turn.py             单轮执行循环（路由 → API → 工具分发）
+│   ├── prompt.py           System prompt 组装与同步
+│   ├── context.py          工具结果压缩 / 不可信内容包装
+│   ├── memory.py           三层记忆系统（语义 / 情景 / 待确认）
+│   ├── extractor.py        被动记忆提取
+│   ├── json_utils.py       JSON 提取工具
+│   ├── tokens.py           Token 计数与上下文窗口
+│   ├── credentials.py      API Key 管理
+│   ├── history.py          会话历史持久化
+│   ├── metrics.py          调用指标采集
+│   ├── progress.py         进度追踪（Plan/Tool 模式）
+│   ├── interrupt.py        中断恢复状态管理
+│   ├── env_probe.py        系统环境探测
+│   └── route_learn.py      路由决策学习
+├── agents/                 子智能体层
+│   ├── base.py             SubAgent 基类
+│   ├── router.py           纯规则路由判定
+│   ├── planner.py          任务规划器
+│   ├── researcher.py       搜索研究员
+│   ├── code_reviewer.py    代码审查
+│   ├── ascend_dev.py       昇腾算子开发
+│   └── ascend_debug.py     昇腾算子调试
+├── skills/                 技能加载层（re-export core.tool_registry）
+│   ├── web_skill.py        网页搜索与内容获取
+│   ├── file_skill.py       文件读写
+│   ├── shell_skill.py      Shell 命令执行
+│   ├── calc_skill.py       安全计算
+│   ├── memory_skill.py     记忆操作
+│   ├── role_skill.py       角色管理
+│   ├── distill_skill.py    角色蒸馏
+│   ├── ascend_skill.py     昇腾设备操作
+│   ├── time_skill.py       时间查询
+│   ├── location_skill.py   位置 / 天气
+│   └── web_skill.py        网页搜索与抓取
+├── cli/                    CLI 交互层
+│   ├── loop.py             主事件循环
+│   ├── commands.py         斜杠命令
+│   ├── completer.py        命令补全
+│   ├── registry.py         命令注册表
+│   ├── picker.py           终端选择器
+│   ├── setup.py            首次配置向导
+│   └── welcome.py          欢迎动画
+├── display/                渲染层（纯显示，无业务逻辑）
+│   ├── renderer.py         事件流渲染
+│   ├── spinner.py          动画指示器
+│   ├── taskboard.py        任务进度面板
+│   ├── md_render.py        Markdown 渲染
+│   ├── statusbar.py        状态栏
+│   ├── theme.py            主题系统
+│   ├── timer.py            计时器
+│   └── output.py           线程安全输出
+└── tests/                  测试
+```
+
+**模块依赖方向（严格单向）：**
+
+```
+cli/ ──→ core/    ──→ (无外部依赖)
+  │       ↑
+  ├──→ display/   ──→ (仅依赖 core/ 的进度/主题)
+  │
+  ├──→ skills/    ──→ core.tool_registry (注册工具)
+  │
+  └──→ agents/    ──→ core.tool_registry (注册 agent 为工具)
+```
+
+- `skills/` 和 `agents/` 之间无直接 import，全部通过 `core/tool_registry` 交互
+- 所有 OpenAI SDK 调用通过 `core/client.ClientPool` 统一管理
+- `display/` 不包含业务逻辑副作用，仅负责渲染
