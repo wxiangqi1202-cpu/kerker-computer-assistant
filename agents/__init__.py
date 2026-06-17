@@ -60,7 +60,7 @@ def _is_similar(a, b):
 
 
 def _parse_planner_result(text):
-    """从 planner 返回文本中提取第一个完整 JSON，解析任务列表，模糊去重"""
+    """从 planner 返回文本中提取第一个完整 JSON，解析任务列表，模糊去重，保留 deps"""
     try:
         json_str = extract_json_object(text)
         if not json_str:
@@ -78,7 +78,14 @@ def _parse_planner_result(text):
                     duplicate = True
                     break
             if not duplicate:
-                result.append({"step": step, "agent": t.get("agent", "")})
+                raw_deps = t.get("deps", [])
+                if not isinstance(raw_deps, list):
+                    raw_deps = []
+                result.append({
+                    "step": step,
+                    "agent": t.get("agent", ""),
+                    "deps": raw_deps,
+                })
         return result
     except Exception:
         pass

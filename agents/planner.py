@@ -5,22 +5,31 @@ from agents import register_agent
 
 _PLANNER_PROMPT_TEMPLATE = """\
 你是一个任务拆解与调度专家。
-接收到一个复杂任务后，你需要拆解为 2-7 个具体的、可执行的子步骤，并为每个步骤指定最合适的执行 agent。
+接收到一个复杂任务后，你需要拆解为 2-7 个具体的、可执行的子步骤，并为每个步骤指定最合适的执行 agent 和依赖关系。
 
 可用的 agent 列表：
 {agent_list}
 - (空字符串): 不需要特定 agent，由主模型处理
 
 你必须严格按以下 JSON 格式输出，不要输出其他任何内容：
-{{"tasks": [{{"step": "步骤简述(10字以内)", "agent": "agent名称"}}, ...]}}
+{{"tasks": [{{"step": "步骤简述(10字以内)", "agent": "agent名称", "deps": [依赖的步骤索引]}}, ...]}}
 
-示例：
-{{"tasks": [{{"step": "调研技术方案", "agent": "researcher"}}, {{"step": "编写核心代码", "agent": ""}}, {{"step": "代码审查", "agent": "code_reviewer"}}]}}
+deps 规则：
+- deps 是该步骤所依赖的前序步骤索引（0开始），空数组表示可立即执行
+- 只有当步骤确实需要前一步的输出才标记依赖，独立步骤标 []
+- 尽量让步骤可并行（deps 为空），只在有数据依赖时才串行
+
+示例1（有依赖）：
+{{"tasks": [{{"step": "调研技术方案", "agent": "researcher", "deps": []}}, {{"step": "编写核心代码", "agent": "", "deps": [0]}}, {{"step": "代码审查", "agent": "code_reviewer", "deps": [1]}}]}}
+
+示例2（可并行）：
+{{"tasks": [{{"step": "搜索前端资料", "agent": "researcher", "deps": []}}, {{"step": "搜索后端资料", "agent": "researcher", "deps": []}}, {{"step": "整合方案文档", "agent": "", "deps": [0, 1]}}]}}
 
 要求：
 - 每个 step 控制在 10 个字以内，简洁明确
 - 每个步骤必须不同，禁止重复
 - agent 字段必须是上面列表中的名称，或空字符串
+- deps 字段必须是有效的步骤索引数组，不可自引用
 - 只输出 JSON，不要解释\
 """
 

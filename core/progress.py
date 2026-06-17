@@ -36,6 +36,7 @@ class ProgressStep:
     name: str
     status: StepStatus = StepStatus.PENDING
     agent: str = ""
+    deps: list = None
     summary: str = ""
     started_at: float = 0.0
     finished_at: float = 0.0
@@ -43,6 +44,8 @@ class ProgressStep:
     rounds_running: int = 0
 
     def __post_init__(self):
+        if self.deps is None:
+            self.deps = []
         if self.sub_activities is None:
             self.sub_activities = []
 
@@ -144,21 +147,27 @@ class ProgressTracker:
     def set_plan(self, steps: list[dict]):
         """
         从 planner 返回的结构设置计划步骤。
-        steps: [{"step": "...", "agent": "..."}, ...]
+        steps: [{"step": "...", "agent": "...", "deps": [...]}, ...]
         切换到 PLAN_MODE。
         """
         with self._lock:
             self._mode = ProgressMode.PLAN_MODE
             self._steps = []
             seen = set()
-            for s in steps:
+            for idx, s in enumerate(steps):
                 name = " ".join(s.get("step", "").split())
                 if not name or name in seen:
                     continue
                 seen.add(name)
+                raw_deps = s.get("deps", [])
+                valid_deps = [
+                    d for d in raw_deps
+                    if isinstance(d, int) and 0 <= d < idx
+                ]
                 self._steps.append(ProgressStep(
                     name=name,
                     agent=s.get("agent", ""),
+                    deps=valid_deps,
                 ))
             self._visible = bool(self._steps)
             self._finished = False
@@ -393,6 +402,7 @@ class ProgressTracker:
                     "name": s.name,
                     "status": s.status.value,
                     "agent": s.agent,
+                    "deps": list(s.deps),
                     "summary": s.summary,
                     "elapsed": s.elapsed,
                     "started_at": s.started_at,
