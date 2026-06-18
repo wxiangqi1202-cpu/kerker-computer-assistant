@@ -19,6 +19,10 @@ on:
         default: '0'
         type: string
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   sync-existing:
     runs-on: ubuntu-latest
@@ -83,6 +87,8 @@ jobs:
             [ -z "$raw" ] || [ "$raw" = "null" ] && echo "" && return
             date -d "$raw" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "$raw"
           }
+
+          FAILED_FILE=$(mktemp)
 
           echo "$PRS" | jq -c '.[]' | while read -r PR; do
             PR_NUMBER=$(echo "$PR" | jq -r '.number')
@@ -252,23 +258,35 @@ jobs:
                 | if $merged_at != "" then . + {"合并时间": $merged_at} else . end')
             fi
 
-            # Find existing record
-            SEARCH_RESULT=$(lark-cli base +record-list \
-              --base-token "$BITABLE_APP_TOKEN" \
-              --table-id "$BITABLE_TABLE_ID" \
-              --as bot \
-              --format json \
-              --field-id "PR编号" \
-              --filter-json "{\"logic\":\"and\",\"conditions\":[[\"PR编号\",\"==\",$PR_NUMBER]]}" \
-              --limit 1) || true
+            # Find existing record (with retry)
+            RECORD_ID=""
+            SEARCH_OK=false
+            for search_attempt in 1 2 3; do
+              SEARCH_RESULT=$(lark-cli base +record-list \
+                --base-token "$BITABLE_APP_TOKEN" \
+                --table-id "$BITABLE_TABLE_ID" \
+                --as bot \
+                --format json \
+                --field-id "PR编号" \
+                --filter-json "{\"logic\":\"and\",\"conditions\":[[\"PR编号\",\"==\",$PR_NUMBER]]}" \
+                --limit 1) || true
 
-            if echo "$SEARCH_RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
-              RECORD_ID=$(echo "$SEARCH_RESULT" | jq -r '
-                (.data.record_id_list // []) | if length > 0 then .[0] else empty end
-              ' 2>/dev/null) || true
-            else
-              echo "  ::warning::record-list failed for PR #$PR_NUMBER, will create new record"
-              RECORD_ID=""
+              if echo "$SEARCH_RESULT" | jq -e '.ok == true' > /dev/null 2>&1; then
+                RECORD_ID=$(echo "$SEARCH_RESULT" | jq -r '
+                  (.data.record_id_list // []) | if length > 0 then .[0] else empty end
+                ' 2>/dev/null) || true
+                SEARCH_OK=true
+                break
+              fi
+              echo "  ::warning::record-list attempt $search_attempt failed for PR #$PR_NUMBER, retrying..."
+              sleep 2
+            done
+
+            if [ "$SEARCH_OK" = false ]; then
+              echo "  ::error::record-list API failed after 3 attempts for PR #$PR_NUMBER, skipping"
+              echo "$PR_NUMBER" >> "$FAILED_FILE"
+              sleep 1
+              continue
             fi
 
             # Upsert
@@ -290,9 +308,22 @@ jobs:
               fi
               echo "  ::warning::Upsert attempt $attempt failed for PR #$PR_NUMBER, retrying..."
               sleep 2
+              if [ "$attempt" -eq 3 ]; then
+                echo "  ::error::Upsert failed after 3 attempts for PR #$PR_NUMBER"
+                echo "$PR_NUMBER" >> "$FAILED_FILE"
+              fi
             done
 
             sleep 1
           done
 
           echo "=== Sync complete ==="
+
+          if [ -s "$FAILED_FILE" ]; then
+            echo ""
+            echo "::error::The following PRs failed to sync:"
+            cat "$FAILED_FILE"
+            rm -f "$FAILED_FILE"
+            exit 1
+          fi
+          rm -f "$FAILED_FILE"
