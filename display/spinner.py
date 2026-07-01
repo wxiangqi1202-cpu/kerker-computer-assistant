@@ -1,11 +1,10 @@
 """
-多行动态状态指示器 + ESC 中断 + 任务面板 + 渲染树内交互
+多行动态状态指示器 + ESC 中断 + 任务面板 + stdin 消费
 
-线程安全设计（v3）：
+线程安全设计（v2）：
 - 状态更新通过 queue.Queue 单向传递给渲染线程
 - 渲染线程持有自己的状态副本，无需跨线程锁读取
-- ask() 方法支持在渲染区域内进行按键交互（无需退出 cbreak）
-- 终端设置在首次进入 cbreak 时保存，stop() 确保恢复
+- 消除 ProgressTracker 的跨线程锁竞争
 """
 
 import sys
@@ -41,27 +40,12 @@ AGENT_TIPS = [
     "子任务分配进行中...", "协作网络展开...",
 ]
 
-_active_spinner = None
+_terminal_locked = False
 
 
 def is_terminal_locked():
-    """终端是否被 spinner 的 cbreak 模式占用"""
-    return _active_spinner is not None and _active_spinner._running
-
-
-def ask_user(prompt_text, valid_keys="yn", default="n"):
-    """在 spinner 渲染区域内进行按键交互。
-    如果 spinner 未运行，降级为终端 input()。
-    返回用户按下的键（小写）。
-    """
-    sp = _active_spinner
-    if sp and sp._running:
-        return sp.ask(prompt_text, valid_keys, default)
-    try:
-        result = input(f"  {prompt_text}: ").strip().lower()
-        return result if result in valid_keys else default
-    except (EOFError, KeyboardInterrupt):
-        return default
+    """终端是否被 spinner 的 cbreak 模式占用（此时 input() 不可用）"""
+    return _terminal_locked
 
 
 class _TipLine:
@@ -86,12 +70,17 @@ class _TipLine:
 
 
 class Spinner:
+    """
+    状态指示器（v2 队列架构）。
+    生产者（主线程/asyncio）通过 update/update_sub 发送消息到队列；
+    消费者（渲染线程）从队列读取并更新本地状态副本后渲染。
+    """
+
     MSG_UPDATE_MAIN = "main"
     MSG_UPDATE_SUB = "sub"
     MSG_REMOVE_SUB = "rm_sub"
 
     def __init__(self):
-        global _active_spinner
         self._main_line = None
         self._sub_lines = {}
         self._taskboard = None
@@ -103,12 +92,7 @@ class Spinner:
         self._start_time = None
         self._line_count = 0
         self.interrupted = threading.Event()
-        self._saved_termios = None
-        self._ask_prompt = None
-        self._ask_result = None
-        self._ask_event = threading.Event()
-        self._ask_valid_keys = ""
-        _active_spinner = self
+        self._old_settings = None
 
     def set_taskboard(self, taskboard):
         self._taskboard = taskboard
@@ -135,45 +119,30 @@ class Spinner:
         self._msg_queue.put((self.MSG_REMOVE_SUB, name))
 
     def _enter_cbreak(self):
+        global _terminal_locked
         fd = sys.stdin.fileno()
         try:
-            current = termios.tcgetattr(fd)
-            if self._saved_termios is None:
-                self._saved_termios = current
+            self._old_settings = termios.tcgetattr(fd)
             tty.setcbreak(fd)
+            _terminal_locked = True
         except Exception:
-            pass
+            self._old_settings = None
 
-    def _restore_terminal(self):
-        """恢复终端到 spinner 启动前的状态。"""
-        if self._saved_termios:
+    def _exit_cbreak(self):
+        global _terminal_locked
+        if self._old_settings:
             fd = sys.stdin.fileno()
             try:
-                while select.select([sys.stdin], [], [], 0.02)[0]:
+                while select.select([sys.stdin], [], [], 0.05)[0]:
                     os.read(fd, 4096)
             except Exception:
                 pass
             try:
-                termios.tcsetattr(fd, termios.TCSADRAIN, self._saved_termios)
+                termios.tcsetattr(fd, termios.TCSADRAIN, self._old_settings)
             except Exception:
                 pass
-            self._saved_termios = None
-
-    def ask(self, prompt_text, valid_keys="yn", default="n"):
-        """在渲染区域内显示选项提示，等待用户按键。
-        阻塞调用线程直到用户按下 valid_keys 中的某个键或 ESC 取消。
-        返回按下的键（小写），ESC/超时返回 default。
-        """
-        self._ask_prompt = prompt_text
-        self._ask_valid_keys = valid_keys.lower()
-        self._ask_result = None
-        self._ask_event.clear()
-        self._ask_event.wait(timeout=60)
-        result = self._ask_result
-        self._ask_prompt = None
-        self._ask_valid_keys = ""
-        self._ask_result = None
-        return result if result else default
+            self._old_settings = None
+        _terminal_locked = False
 
     def _read_keys(self):
         fd = sys.stdin.fileno()
@@ -186,17 +155,8 @@ class Spinner:
                             while select.select([sys.stdin], [], [], 0.02)[0]:
                                 os.read(fd, 1)
                         else:
-                            if self._ask_prompt:
-                                self._ask_result = None
-                                self._ask_event.set()
-                            else:
-                                self.interrupted.set()
-                                self._running = False
-                    elif self._ask_prompt:
-                        key = ch.decode("utf-8", errors="ignore").lower()
-                        if key in self._ask_valid_keys:
-                            self._ask_result = key
-                            self._ask_event.set()
+                            self.interrupted.set()
+                            self._running = False
             except Exception:
                 break
 
@@ -213,6 +173,7 @@ class Spinner:
             time.sleep(0.08)
 
     def _drain_queue(self):
+        """批量消费队列中的状态更新消息"""
         while True:
             try:
                 msg = self._msg_queue.get_nowait()
@@ -259,12 +220,6 @@ class Spinner:
             tl = tl.replace("\n", " ").replace("\r", "")
             buf.append(f"\r{tl}\033[K")
 
-        if self._ask_prompt:
-            keys_display = "  ".join(
-                f"\033[1;97m[{k}]\033[0m" for k in self._ask_valid_keys
-            )
-            buf.append(f"\r    \033[38;5;220m⚠\033[0m {self._ask_prompt}  {keys_display}\033[K")
-
         total_lines = len(buf)
 
         output = ""
@@ -283,15 +238,13 @@ class Spinner:
 
     def stop(self, final_message=None):
         self._running = False
-        if self._ask_prompt:
-            self._ask_event.set()
         if self._thread:
             self._thread.join(timeout=3.0)
             self._thread = None
         if self._key_thread:
             self._key_thread.join(timeout=0.5)
             self._key_thread = None
-        self._restore_terminal()
+        self._exit_cbreak()
 
         _out.acquire()
         try:

@@ -124,8 +124,8 @@ def format_env_prompt(env_info=None):
 
     lines.append("")
     lines.append(
-        "当用户的需求涉及以上工具时，你可以通过 run_shell 直接调用它们来完成任务。"
-        "不要说做不到，先用 run_shell 探索系统上有什么可用的命令和工具。"
+        "当用户的需求涉及以上工具时，通过 run_shell 直接调用。"
+        "系统工具列表仅供参考，未列出的工具也可能存在。"
     )
 
     return "\n".join(lines)

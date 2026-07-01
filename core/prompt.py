@@ -85,11 +85,10 @@ def _update_role_info(messages):
     role_list = ", ".join(config.ROLES.keys())
     role_info = (
         f"{PREFIX_ROLE_INFO} 当前: {config.CURRENT_ROLE}。可切换: {role_list}。\n"
-        "角色操作规则（必须遵守）：\n"
-        "- 切换已有角色 → 调 switch_role\n"
-        "- 创建新角色 → 调 distill_role 提取特征，然后调 save_distilled_role 保存并切换\n"
-        "- 绝对不要直接用对话方式'扮演'角色，必须通过工具创建/切换后再以该角色身份回答\n"
-        "- 只有 save_distilled_role 成功后，角色才算真正生效"
+        "角色操作（工具调用，非对话）：\n"
+        "- 切换已有角色 → switch_role\n"
+        "- 创建新角色 → distill_role → save_distilled_role\n"
+        "- 不要直接用对话方式扮演角色，必须通过工具操作"
     )
     existing = [i for i, m in enumerate(messages)
                 if m.get("role") == "system" and m.get("content", "").startswith(PREFIX_ROLE_INFO)]

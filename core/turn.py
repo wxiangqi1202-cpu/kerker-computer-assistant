@@ -65,10 +65,13 @@ def _try_auto_route(messages):
     if decision.action == RouteDecision.PLAN:
         if decision.reason == "算子任务强制规划":
             directive = (
-                f"{PREFIX_AUTO_ROUTE} 检测到算子开发/调试任务。必须先调用 agent_planner 进行任务规划，"
-                "然后严格按照规划步骤逐个调用相应子智能体执行（ascend_dev / ascend_debug）。"
-                "不要跳过规划直接开发，不要一次性完成所有步骤。"
-                "每完成一个步骤等返回后再执行下一个。"
+                f"{PREFIX_AUTO_ROUTE} 检测到算子开发/调试任务。\n"
+                "执行流程：\n"
+                "1. 调用 agent_planner 进行任务规划\n"
+                "2. 按规划步骤逐个调用相应子智能体（ascend_dev / ascend_debug）\n"
+                "3. 每步完成后检查结果，再执行下一步\n"
+                "4. 全部完成后给出结构化总结\n"
+                "不要跳过规划直接开发。"
             )
         elif decision.reason == "继承上轮规划":
             context_prompt = tracker.build_context_prompt()
@@ -80,10 +83,10 @@ def _try_auto_route(messages):
                     step_lines.append(f"  {i}. {step.name} → 调用 {agent_hint}")
                 plan_detail = "\n".join(step_lines)
                 directive = (
-                    f"{PREFIX_AUTO_ROUTE} 继续执行上轮规划。以下是完整规划，请严格按顺序执行:\n"
+                    f"{PREFIX_AUTO_ROUTE} 继续执行上轮规划。完整步骤如下:\n"
                     f"{plan_detail}\n\n"
-                    f"请立即调用第一个待执行步骤对应的子智能体。"
-                    f"每次只调一个，等返回后再调下一个。全部完成后给出总结。"
+                    f"请立即调用下一个待执行步骤对应的子智能体。"
+                    f"无依赖关系的步骤可同时调用。全部完成后给出整合总结。"
                 )
                 if context_prompt:
                     directive += f"\n\n{context_prompt}"
@@ -264,12 +267,19 @@ def _post_round_inject(messages, tracker, agent_calls, other_calls):
     if tracker.needs_replan:
         import agents as _agents_mod
         _agents_mod.reset_planner()
+        failed_steps = [
+            s.name for s in tracker.plan_steps
+            if s.status.value == "error"
+        ]
+        failed_info = "、".join(failed_steps[:3]) if failed_steps else "多个步骤"
         messages.append({
             "role": "system",
             "content": (
-                f"{PREFIX_EXEC_FEEDBACK} 多个步骤执行失败，当前规划可能不合理。"
-                "请重新调用 agent_planner 制定新的规划方案，"
-                "或者调整策略直接完成剩余任务。"
+                f"{PREFIX_EXEC_FEEDBACK} {failed_info}执行失败，当前规划可能不合理。"
+                "你有两个选择：\n"
+                "1. 重新调用 agent_planner 制定更合理的规划\n"
+                "2. 跳过失败步骤，用自身能力直接完成剩余任务\n"
+                "请根据失败原因判断哪个方案更合适。"
             ),
         })
     elif agent_calls and tracker.has_plan:

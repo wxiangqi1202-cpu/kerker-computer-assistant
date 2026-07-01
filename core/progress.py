@@ -512,7 +512,7 @@ class ProgressTracker:
             return self._animation_speed
 
     def build_context_prompt(self, agent_name: str = "") -> str:
-        """为子智能体构建上下文注入"""
+        """为子智能体构建上下文注入，提供任务全景和已完成工作的摘要"""
         with self._lock:
             parts = []
             if self._original_task:
@@ -527,7 +527,7 @@ class ProgressTracker:
                 parts.append("[执行规划]\n" + "\n".join(plan_lines))
             if self._memory:
                 mem_lines = [f"  [{m['agent']}] {m['summary']}" for m in self._memory[-5:]]
-                parts.append("[已完成的工作]\n" + "\n".join(mem_lines))
+                parts.append("[已完成工作（可复用这些结果，不要重复执行）]\n" + "\n".join(mem_lines))
             return "\n\n".join(parts) if parts else ""
 
 
